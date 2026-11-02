@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pets</title>
+<style>html,body{margin:0;background:#ebebec}canvas{display:block}</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<script type="module">
+// Every Grok pet in one still frame, for checking shapes and eyes. Draws once, no loop.
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { Bot } from '../src/bots.js';
+import { PET_SHAPES } from '../src/pets.js';
+
+const COLORS = ['#FF263C', '#FF6700', '#FF9800', '#00C972', '#00BCA6', '#1084FE', '#9159FE', '#FF309B', '#936439', '#777777', '#1b1b1f'];
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(1);
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.NeutralToneMapping;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xebebec);
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 0.5;
+scene.add(new THREE.HemisphereLight(0xffffff, 0xd8d5ce, 1.15));
+const sun = new THREE.DirectionalLight(0xfff5e8, 2.1);
+sun.position.set(-4, 10, 8);
+scene.add(sun);
+const cols = 9, gap = 2.6, rowGap = 4.2;
+PET_SHAPES.forEach((shape, i) => {
+  const bot = new Bot({ id: shape, name: shape, shape, color: COLORS[i % COLORS.length] }, true);
+  bot.root.position.set((i % cols - (cols - 1) / 2) * gap, 0, Math.floor(i / cols) * rowGap);
+  bot.root.rotation.y = 0.35;
+  scene.add(bot.root);
+});
+const aspect = innerWidth / innerHeight, h = 6.2;
+const camera = new THREE.OrthographicCamera(-h * aspect, h * aspect, h, -h, 0.1, 200);
+camera.position.set(0, 26, 22);
+camera.lookAt(0, 0.8, 4.2);
+renderer.render(scene, camera);
+window.__frame = () => renderer.render(scene, camera);
+</script>
+</body>
+</html>

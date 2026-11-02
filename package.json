@@ -1,0 +1,11 @@
+{
+  "name": "grokbot-office",
+  "version": "0.1.0",
+  "description": "A live 3D office for the bots in your Grok Bot desktop app. Not affiliated with xAI.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "grokbot-office": "bin/office.mjs" },
+  "scripts": { "start": "node bin/office.mjs" },
+  "engines": { "node": ">=18" },
+  "repository": "github:Charonyuu/grokbot-office"
+}
