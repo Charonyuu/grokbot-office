@@ -553,7 +553,9 @@ export class Floor {
   solid(x, z, w, d) { this.blocks.push({ x, z, w, d }); }
   round(x, z, r) { this.blocks.push({ x, z, r }); }
   spot(zone, act, x, y, z, face, approach = null) {
-    this.rest.push({ zone, act, pos: V(x, y, z), face, approach, taken: null });
+    const sp = { zone, act, pos: V(x, y, z), face, approach, taken: null };
+    this.rest.push(sp);
+    return sp;
   }
 
   rug(zone, x0, z0, x1, z1, base, dots, label, ink) {
@@ -689,7 +691,7 @@ export class Floor {
     grp.rotation.y = st.yaw;
     this.inner.add(grp);
     const type = st.type;
-    const h = type === 'standing' ? 1.85 : 1.45;
+    const h = type === 'standing' ? 1.3 : 1.45; // the standing desk is at a chibi's chest height
     const legs = (w, d, y0, material, inset = 0.12) => {
       for (const ex of [-1, 1]) for (const ez of [-1, 1]) grp.add(box(0.07, y0, 0.07, material, ex * (w / 2 - inset), y0 / 2, 1.45 + ez * (d / 2 - inset)));
     };
@@ -783,12 +785,12 @@ export class Floor {
       grp.add(box(0.06, 0.45, 0.06, M.dark, 0, h + 0.28, 1.8));
       screen.position.set(0, h + 0.38, 1.78);
       screen.add(box(1.0, 0.62, 0.05, M.dark, 0, 0.29, 0.02, 0.02));
-      grp.add(box(0.7, 0.02, 0.22, M.white, 0, h + 0.06, 1.25)); // keyboard
+      grp.add(box(0.7, 0.02, 0.22, M.white, 0, h + 0.06, 1.12)); // keyboard
       display.scale.set(1.2, 1.1, 1);
       display.position.set(0, 0.29, -0.01);
     } else {
-      grp.add(box(0.85, 0.04, 0.58, M.laptop, 0, h + 0.07, 1.4));
-      screen.position.set(0, h + 0.07, 1.68);
+      grp.add(box(0.85, 0.04, 0.58, M.laptop, 0, h + 0.07, 1.3));
+      screen.position.set(0, h + 0.07, 1.58);
       screen.rotation.x = 0.28;
       screen.add(box(0.85, 0.58, 0.03, M.laptop, 0, 0.29, 0));
       display.position.set(0, 0.29, -0.02);
@@ -812,6 +814,8 @@ export class Floor {
       display,
       type,
       h,
+      // where the hands go to type: the desk's near edge, by the keyboard
+      reach: { y: h + 0.06, z: { round: 0.6, standing: 1.02, curved: 0.93, pastel: 0.97 }[type] ?? 0.95 },
       frame,
       lid,
       slots,
@@ -1117,9 +1121,10 @@ export class Floor {
     g.add(box(0.5, 0.85, 1.8, sofa, sx + 3.8, 0.55, sz, 0.2));
     [G.yellow, G.pink, G.blue].forEach((col, i) => g.add(box(0.9, 0.7, 0.25, C(col, { roughness: 0.9 }), sx - 2.4 + i * 2.4 + 0.7, 1.2, sz - 0.5, 0.12)));
     this.solid(sx, sz - 0.1, 8.1, 2.0);
-    this.spot('lounge', 'nap', sx - 2.4, 0.7, sz + 0.2, 0, V(sx - 2.4, 0, sz + 2.3));
+    // nappers lie along the sofa, head to the armrest
+    this.spot('lounge', 'nap', sx - 2.4, 0.7, sz + 0.2, 0, V(sx - 2.4, 0, sz + 2.3)).lie = 1;
     this.spot('lounge', 'relax', sx, 0.7, sz + 0.2, 0, V(sx, 0, sz + 2.3));
-    this.spot('lounge', 'nap', sx + 2.4, 0.7, sz + 0.2, 0, V(sx + 2.4, 0, sz + 2.3));
+    this.spot('lounge', 'nap', sx + 2.4, 0.7, sz + 0.2, 0, V(sx + 2.4, 0, sz + 2.3)).lie = -1;
     // coffee table
     g.add(cyl(0.9, 0.9, 0.08, M.wood, sx, 0.55, 7.0, 32));
     g.add(cyl(0.1, 0.1, 0.5, M.frame, sx, 0.27, 7.0, 10));
@@ -1179,7 +1184,7 @@ export class Floor {
     g.add(arc);
     this.fx.arcade = arc;
     this.solid(ax, az, 1.2, 1.1);
-    this.spot('lounge', 'game', ax - 2.1, 0, az, Math.PI / 2);
+    this.spot('lounge', 'game', ax - 1.55, 0, az, Math.PI / 2);
     this.fx.game.push(this.rest.length - 1);
     // armchair
     const chair = new THREE.Group();

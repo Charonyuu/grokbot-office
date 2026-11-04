@@ -269,7 +269,8 @@ window.__office = {
     const b = botLayer.get(id);
     if (!b) return;
     const v = new THREE.Vector3();
-    b.body.getWorldPosition(v);
+    b.root.getWorldPosition(v);
+    v.y += 1.2;
     flyTo(v, zoom, dur, 0.05);
   },
   // run the office forward without drawing (tests on slow headless machines)
@@ -282,8 +283,8 @@ window.__office = {
     const b = botLayer.get(id);
     if (!b) return null;
     const v = new THREE.Vector3();
-    b.body.getWorldPosition(v);
-    v.y += b.height * 0.45;
+    b.root.getWorldPosition(v);
+    v.y += b.height * 0.5;
     v.project(camera);
     return [((v.x + 1) / 2) * innerWidth, ((1 - v.y) / 2) * innerHeight];
   },

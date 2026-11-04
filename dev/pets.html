@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>Pets</title>
-<style>html,body{margin:0;background:#ebebec}canvas{display:block}</style>
+<style>html,body{margin:0;background:#ebebec;overflow:hidden}canvas{display:block}.tag{position:absolute;transform:translate(-50%,0);font:600 12px system-ui,sans-serif;color:#55555c}</style>
 <script type="importmap">
 { "imports": {
   "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
@@ -13,11 +13,13 @@
 </head>
 <body>
 <script type="module">
-// Every Grok pet in one still frame, for checking shapes and eyes. Draws once, no loop.
+// Every Grok pet as a chibi in one still frame, for checking head shapes, eyes and
+// outfits. Draws once, no loop. ?pose=wave|stand|sit
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { Bot } from '../src/bots.js';
 import { PET_SHAPES } from '../src/pets.js';
+import { HIPS, vec } from '../src/chibi.js';
 
 const COLORS = ['#FF263C', '#FF6700', '#FF9800', '#00C972', '#00BCA6', '#1084FE', '#9159FE', '#FF309B', '#936439', '#777777', '#1b1b1f'];
 const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -33,17 +35,35 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0xd8d5ce, 1.15));
 const sun = new THREE.DirectionalLight(0xfff5e8, 2.1);
 sun.position.set(-4, 10, 8);
 scene.add(sun);
-const cols = 9, gap = 2.6, rowGap = 4.2;
+const cols = 9, gap = 2.6, rowGap = 3.7;
+const bots = [];
 PET_SHAPES.forEach((shape, i) => {
   const bot = new Bot({ id: shape, name: shape, shape, color: COLORS[i % COLORS.length] }, true);
-  bot.root.position.set((i % cols - (cols - 1) / 2) * gap, 0, Math.floor(i / cols) * rowGap);
+  bot.root.position.set((i % cols - (cols - 1) / 2) * gap, -Math.floor(i / cols) * rowGap, 0);
   bot.root.rotation.y = 0.35;
+  // every other one waves
+  const pose = new URLSearchParams(location.search).get('pose') || 'wave';
+  const P = { hy: HIPS, aL: { a: [0.05, 0.14, 0.25] }, aR: { a: [0.05, -0.14, 0.25] }, lL: { a: [0, 0.04, 0.04] }, lR: { a: [0, -0.04, 0.04] } };
+  if (pose === 'wave' && i % 2) P.aR = { t: vec(-0.62, HIPS + 0.74, 0.16), p: vec(-1, -0.6, 0) };
+  if (pose === 'wave' && i % 2 === 0) { P.aL = { t: vec(0.37, HIPS + 0.12, 0.04), p: vec(1, 0.1, -0.5) }; P.aR = { t: vec(-0.37, HIPS + 0.12, 0.04), p: vec(-1, 0.1, -0.5) }; }
+  bot.chibi.apply(P, 1);
   scene.add(bot.root);
+  bots.push([shape, bot]);
 });
-const aspect = innerWidth / innerHeight, h = 6.2;
+const aspect = innerWidth / innerHeight, h = 7.4;
 const camera = new THREE.OrthographicCamera(-h * aspect, h * aspect, h, -h, 0.1, 200);
-camera.position.set(0, 26, 22);
-camera.lookAt(0, 0.8, 4.2);
+camera.position.set(0, 6, 30);
+camera.lookAt(0, -2.4, 0);
+camera.updateMatrixWorld();
+for (const [shape, bot] of bots) {
+  const v = bot.root.position.clone().project(camera);
+  const tag = document.createElement('div');
+  tag.className = 'tag';
+  tag.textContent = shape;
+  tag.style.left = `${((v.x + 1) / 2) * innerWidth}px`;
+  tag.style.top = `${((1 - v.y) / 2) * innerHeight + 8}px`;
+  document.body.appendChild(tag);
+}
 renderer.render(scene, camera);
 window.__frame = () => renderer.render(scene, camera);
 </script>

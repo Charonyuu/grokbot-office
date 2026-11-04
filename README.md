@@ -1,14 +1,26 @@
 # GrokBot Office
 
-![GrokBot Office: your Grok Bot pets dozing, working and asking you things in a 3D office](docs/demo.gif)
+![GrokBot Office: your Grok Bot bots as little chibi people, working at their desks and asking you things in a 3D office](docs/demo.gif)
 
-A live 3D office for the bots in your **Grok Bot** desktop app. Every bot is its own little pet, in the same shape and colour you gave it in the app, with its own named desk. The busy ones type at their desks, the ones that need you bounce on their chairs until you answer, and the ones with nothing to do get up and wander a Google-style campus: a café, a gym and a lounge. One click opens that bot in Grok Bot so you can reply.
+A live 3D office for the bots in your **Grok Bot** desktop app. Every bot is a cute chibi with a big head and a little body, arms and legs. The head is the bot's avatar from the app, in the same shape and colour, pill eyes and all. Each one has its own named desk. The busy ones sit and type, the ones that need you stand on their chairs and wave until you answer, and the ones with nothing to do get up and wander a Google-style campus: a café, a gym and a lounge. One click opens that bot in Grok Bot so you can reply.
 
 > **Credit.** The idea comes from [@0xCodila's GrokBot live dashboard](https://x.com/0xCodila/status/2116960213206966317): teams of bots shown as floors of a 3D office. That dashboard isn't open source. This is an independent, open-source take with its own code, models, layout and data source (it reads the Grok Bot app on your own Mac instead of asking the bots to report in).
 >
-> **Not affiliated with xAI, Grok or the Grok Bot app.** "Grok Bot" is used only to say which app this works with. The pets mirror the avatar shapes and colours the app lets you pick so your bots look familiar; everything is drawn from code in this repo.
+> **Not affiliated with xAI, Grok or the Grok Bot app.** "Grok Bot" is used only to say which app this works with. The chibis' heads mirror the avatar shapes and colours the app lets you pick so your bots look familiar; everything is drawn from code in this repo.
 
 ![A floor: named desks on the left; café, gym and lounge on the right, with bots on a break eating, running, playing ping-pong and video games](docs/zones.png)
+
+### The chibis
+
+Every avatar shape in the app becomes a head on a little body. The clothes are picked from the bot's id (a tee, a striped top, a hoodie, overalls or a scarf), tinted from its colour, so no two bots dress quite alike:
+
+![Every avatar shape as a chibi head: blob, pebble, bean, egg, squircle, tablet, capsule, cylinder, hex, gem, crystal, wedge, shield, dome, arch, cloud, teardrop, leaf, square, sparkle, clover, flower, heart, house, star, pumpkin](docs/chibis.png)
+
+They move their arms and legs for everything they do. They walk with a stride and hop up onto their seats. At the desk they sit with their legs dangling and type. They wave when they need you and hold their heads when they're stuck. On a break they stretch out on the sofa, game with a controller, run on the treadmill, swing a ping-pong paddle, shoot hoops, hold yoga poses, eat from a bowl, sip coffee, chat with their hands and work the foosball rods:
+
+![Chibis typing, waving, stuck, walking, napping, gaming, playing ping-pong and yoga, eating and chatting](docs/chibi-activities.png)
+
+`dev/pets.html` shows every shape side by side.
 
 ## Run it
 
@@ -26,13 +38,13 @@ Open http://127.0.0.1:4321/. Your bots appear on their own.
 
 ## What you see
 
-| The pet is... | Because |
+| The bot is... | Because |
 |---|---|
 | away from its desk in the café, gym or lounge | nothing to do: its last reply is done (it's on a break) |
-| at its desk, laptop lit, typing | you asked something and it hasn't replied yet, or it just replied |
-| bouncing on its chair, yellow "?", yellow ring pulsing round the desk | it is waiting on you: a choice card, a permission ask, a form, an email draft to approve, or a question |
-| shaking at its desk with a red "!" and a red ring | it is stuck |
-| spinning on the spot | it just finished something |
+| sitting at its desk, laptop lit, typing | you asked something and it hasn't replied yet, or it just replied |
+| standing on its chair, bouncing and waving, yellow "?", yellow ring pulsing round the desk | it is waiting on you: a choice card, a permission ask, a form, an email draft to approve, or a question |
+| shaking at its desk, hands on its head, with a red "!" and a red ring | it is stuck |
+| spinning and cheering with its arms up | it just finished something |
 
 ### Desks and break zones
 
@@ -96,7 +108,7 @@ Everything stays on your machine. The server only listens on 127.0.0.1, reads th
 
 ## 中文說明
 
-把 Grok Bot 桌面版裡的 bot 變成 3D 辦公室裡的寵物。每個 bot 都有自己的獨立座位（不是一整排長桌），桌上插著寫了名字的小旗子；忙的在座位上打字，需要你回覆的會在椅子上跳、座位周圍亮起黃色光圈（卡住的是紅色「!」），點一下「Answer in Grok Bot」就跳回那個對話。執行 `node bin/office.mjs`，打開 http://127.0.0.1:4321/ 就好，資料只在你自己的電腦上讀取。
+把 Grok Bot 桌面版裡的 bot 變成 3D 辦公室裡的可愛 Q 版小人：大頭、小身體，有手有腳，**頭就是 bot 在 app 裡的頭像**（同樣的形狀、顏色和眼睛），衣服（T 恤、條紋衫、帽 T、吊帶褲、圍巾）依 bot 自動搭配。每個 bot 都有自己的獨立座位（不是一整排長桌），桌上插著寫了名字的小旗子；忙的坐在座位上打字，需要你回覆的會站到椅子上跳、揮手，座位周圍亮起黃色光圈（卡住的會抱頭發抖，亮起紅色「!」），點一下「Answer in Grok Bot」就跳回那個對話。執行 `node bin/office.mjs`，打開 http://127.0.0.1:4321/ 就好，資料只在你自己的電腦上讀取。
 
 辦公室參考 Google 辦公室的配置，除了座位區，每層樓還有：
 
@@ -106,7 +118,7 @@ Everything stays on your machine. The server only listens on 127.0.0.1, reads th
 
 座位一個個分開擺放、方向各不相同，中間留走道。桌子有木桌、圓桌、L 型桌、站立桌、弧形桌、粉彩桌，椅子有辦公椅、高腳凳、瑜珈球、懶骨頭坐墊；每個座位依 bot 固定配上不同的裝飾：盆栽、仙人掌、檯燈、馬克杯、娃娃、小旗、相框、書、耳機、小電扇、魚缸、獎盃、甜甜圈，還有地毯和筆電貼紙。空位會擺上植物、書架或白板。低畫質時會省略裝飾以保持流暢。
 
-bot 閒置時會離開座位，**走路**（不是瞬移）到這些區域找空位活動，過一陣子會換到別的區域；一接到工作就走回自己的座位開始打字。頭上的小圖示會顯示它正在做什麼，點開 bot 卡片也會寫出來（例如「Playing ping-pong · Gym」）。
+bot 閒置時會離開座位，**走路**（擺手邁步，不是瞬移）到這些區域找空位活動：躺在沙發上睡午覺、拿手把打電動、跑步機上跑步、揮桌球拍、投籃、做瑜珈、捧碗吃飯、喝咖啡、比手畫腳聊天、轉手足球桿，過一陣子會換到別的區域；一接到工作就走回自己的座位開始打字。頭上的小圖示會顯示它正在做什麼，點開 bot 卡片也會寫出來（例如「Playing ping-pong · Gym」）。
 
 想一次看到全部的 bot：按電梯面板最上面的 **All bots**（或網址加 `?all`），所有樓層會攤開並排顯示；右側 Today 卡片也會列出每一個 bot。人數再多，座位區也會自動加排、加列，保證每個 bot 都有位子。側邊欄裡隱藏的 bot 也會顯示（放在 Hidden 樓層）；只想看側邊欄的 bot 可設 `GROKBOT_SIDEBAR_ONLY=1`。用 `?demo` 可以看 30 個 bot 的示範，`?demo&bots=60` 可以看更擠的辦公室。
 
