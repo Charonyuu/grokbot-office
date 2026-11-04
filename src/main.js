@@ -87,6 +87,7 @@ function applyQuality(c, tier) {
   // shadow on/off changes every shader
   scene.traverse((o) => { for (const m of [].concat(o.material || [])) m.needsUpdate = true; });
   botLayer.setGloss(c.gloss);
+  building.setDecor(tier !== 'low');
   document.documentElement.dataset.quality = tier;
   resize();
 }

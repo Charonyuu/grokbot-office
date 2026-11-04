@@ -273,7 +273,7 @@ export class BotLayer {
         }
         // every bot has its own desk (floors are sized so there is always one)
         const seat = floor.seats[i % floor.seats.length];
-        plates[i % floor.seats.length] = { name: rec.name, color: rec.color };
+        plates[i % floor.seats.length] = { id: rec.id, name: rec.name, color: rec.color };
         if (bot.seat && bot.seat !== seat) {
           bot.seat.display.material.emissive.set(0);
           if (bot.key === 'seat') bot.key = 'reseat';

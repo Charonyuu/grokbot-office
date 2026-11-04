@@ -10,18 +10,50 @@ export const H = 7.5;
 const WALL_H = H - 0.5;
 const LIFT = 34; // how far a floor rises when the building is cut open below it
 const ZONE_W = 28; // width of the café / gym / lounge side of a floor
-const PER_SIDE_MAX = 12; // seats along one side of a desk row before another row is added
 const SPREAD_GAP = 14; // space between floors laid out side by side (the walls are tall)
+const PX = 4.8, PZ = 5.8; // desk grid pitch (each desk is nudged and turned off it)
 
 // How big a floor has to be so every bot on its busiest team gets its own desk.
 export function floorPlan(n) {
   n = Math.max(1, n | 0);
-  const rows = Math.max(2, Math.ceil(n / (2 * PER_SIDE_MAX)));
-  const k = Math.max(5, Math.ceil(n / (2 * rows)));
-  const deskLen = 3 * k + 1.9; // seats on the two sides are staggered by 1.5
+  const desks = Math.max(6, n);
+  const cells = desks + Math.max(1, Math.round(desks * 0.12)); // a few cells stay free for plants and shelves
+  const rows = Math.max(3, Math.ceil(Math.sqrt(cells / 1.6)));
+  const cols = Math.max(2, Math.ceil(cells / rows));
+  const deskLen = cols * PX + 1.2;
   const W = 2.8 + deskLen + 3.4 + ZONE_W + 0.6;
-  const D = Math.max(22, rows * 7.6 + 6.8);
-  return { rows, k, deskLen, W, D, seats: rows * k * 2, key: `${rows}x${k}` };
+  const D = Math.max(22, rows * PZ + 5.5);
+  return { rows, cols, desks, deskLen, W, D, seats: desks, key: `${rows}x${cols}x${desks}` };
+}
+
+const DESK_TYPES = ['wood', 'round', 'L', 'standing', 'curved', 'pastel'];
+const YAWS = [0, 0, 0.3, -0.3, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, 0.6, -0.6, Math.PI * 0.85, -Math.PI * 0.85];
+
+function hashStr(s) {
+  let h = 2166136261;
+  for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
+  return h >>> 0;
+}
+
+// a workstation's footprint on the floor: desk parts, the bot on its chair, and the
+// spot behind the chair it walks in from
+function footprint(type, x, z, yaw) {
+  const cs = Math.cos(yaw), sn = Math.sin(yaw);
+  const at = (lx, lz) => ({ x: x + lx * cs + lz * sn, z: z - lx * sn + lz * cs });
+  const parts = {
+    wood: [[0, 1.45, 1.15]],
+    round: [[0, 1.45, 0.95]],
+    L: [[0, 1.45, 1.05], [1.45, 0.95, 0.8]],
+    standing: [[0, 1.45, 1.05]],
+    curved: [[-0.99, 0.99, 0.62], [0, 1.4, 0.62], [0.99, 0.99, 0.62]],
+    pastel: [[0, 1.45, 1.1]],
+  }[type];
+  return {
+    type, x, z, yaw,
+    circles: parts.map(([lx, lz, r]) => ({ ...at(lx, lz), r })),
+    bot: { x, z, r: 1.1 },
+    approach: at(0, -2.15),
+  };
 }
 
 const mat = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...o });
@@ -54,7 +86,100 @@ const M = {
   steel: mat(0xb8bcc4, { roughness: 0.3, metalness: 0.7 }),
   dark: mat(0x2c2f36, { roughness: 0.5 }),
   lift: mat(0x8d8d90, { roughness: 0.5 }),
+  walnut: mat(0x9a6b45, { roughness: 0.6 }),
 };
+const PASTEL = { mint: 0xbfeadb, pink: 0xffd1e0, lavender: 0xd9ccff, butter: 0xfff0b3, sky: 0xcfe6ff, peach: 0xffd8bf };
+const DECOR_COLORS = [PASTEL.mint, PASTEL.pink, PASTEL.lavender, PASTEL.butter, PASTEL.sky, PASTEL.peach, 0xffe0f0, 0xd6f5e3];
+
+// Little things for desks. Each returns [geometry, material] pairs standing on y = 0
+// (the desk top); `mine` is the bot's own colour, r a seeded random.
+const cylG = (rt, rb, h, seg = 12) => new THREE.CylinderGeometry(rt, rb, h, seg);
+const sphG = (rad, seg = 10) => new THREE.SphereGeometry(rad, seg, Math.max(6, (seg * 0.7) | 0));
+const boxG = (w, h, d) => new THREE.BoxGeometry(w, h, d);
+const anyOf = (r, list) => list[Math.floor(r() * list.length)];
+const DECOR = {
+  plant: (mine, r) => [
+    [cylG(0.13, 0.1, 0.2).translate(0, 0.1, 0), C(0xc8734a, { roughness: 0.7 })],
+    ...[[0, 0.34, 0], [0.08, 0.29, 0.05], [-0.07, 0.3, -0.05], [0.02, 0.27, -0.09]].map(([x, y, z], k) => [sphG(0.11).translate(x, y, z), M.leaves[k % 3]]),
+  ],
+  cactus: (mine, r) => [
+    [cylG(0.12, 0.1, 0.16).translate(0, 0.08, 0), C(anyOf(r, [G.blue, G.pink, 0xf2f2f2]), { roughness: 0.6 })],
+    [new THREE.CapsuleGeometry(0.065, 0.28, 4, 10).translate(0, 0.36, 0), C(0x4f9d5d, { roughness: 0.7 })],
+    [new THREE.CapsuleGeometry(0.035, 0.1, 4, 8).rotateZ(0.9).translate(0.09, 0.34, 0), C(0x4f9d5d, { roughness: 0.7 })],
+    [sphG(0.04, 8).translate(0, 0.58, 0), C(G.pink, { roughness: 0.5 })],
+  ],
+  lamp: (mine, r) => {
+    const col = C(anyOf(r, [G.yellow, G.red, G.blue, G.green, 0xffffff]), { roughness: 0.4 });
+    return [
+      [cylG(0.13, 0.14, 0.04, 16).translate(0, 0.02, 0), col],
+      [cylG(0.02, 0.02, 0.5, 6).rotateZ(0.25).translate(-0.06, 0.27, 0), M.steel],
+      [cylG(0.05, 0.16, 0.16, 16).rotateZ(-0.7).translate(-0.1, 0.52, 0), col],
+      [sphG(0.05, 8).translate(-0.05, 0.47, 0), C(0xfff3b0, { emissive: 0xffd36b, emissiveIntensity: 1.2 })],
+    ];
+  },
+  mug: (mine, r) => [
+    [cylG(0.08, 0.07, 0.16, 14).translate(0, 0.08, 0), mine],
+    [new THREE.TorusGeometry(0.05, 0.015, 6, 12).translate(0.085, 0.09, 0), mine],
+    [cylG(0.07, 0.07, 0.01, 12).translate(0, 0.15, 0), C(0x6b4226, { roughness: 0.4 })],
+  ],
+  plush: (mine, r) => [
+    [sphG(0.15, 14).scale(1, 0.9, 0.9).translate(0, 0.14, 0), mine],
+    [sphG(0.05, 8).translate(-0.09, 0.27, 0), mine],
+    [sphG(0.05, 8).translate(0.09, 0.27, 0), mine],
+    [new THREE.CapsuleGeometry(0.015, 0.03, 2, 6).translate(-0.045, 0.17, -0.13), M.white],
+    [new THREE.CapsuleGeometry(0.015, 0.03, 2, 6).translate(0.045, 0.17, -0.13), M.white],
+  ],
+  miniflag: (mine, r) => [
+    [cylG(0.06, 0.07, 0.04).translate(0, 0.02, 0), M.dark],
+    [cylG(0.01, 0.01, 0.45, 6).translate(0, 0.24, 0), M.steel],
+    [boxG(0.22, 0.14, 0.01).translate(0.11, 0.39, 0), mine],
+  ],
+  frame: (mine, r) => [
+    [boxG(0.3, 0.24, 0.03).rotateX(-0.25).translate(0, 0.13, 0), anyOf(r, [M.wood, M.walnut, M.dark, M.white])],
+    [boxG(0.24, 0.18, 0.01).rotateX(-0.25).translate(0, 0.135, -0.02), C(anyOf(r, [PASTEL.sky, PASTEL.peach, PASTEL.mint]), { roughness: 0.4 })],
+    [sphG(0.035, 8).translate(0.03, 0.14, -0.035), mine],
+  ],
+  books: (mine, r) => [0, 1, 2].map((k) => [boxG(0.32 - k * 0.03, 0.06, 0.22).rotateY((r() - 0.5) * 0.5).translate(0, 0.03 + k * 0.062, 0), C(anyOf(r, [G.blue, G.red, G.yellow, G.green, G.purple, G.teal]), { roughness: 0.6 })]),
+  headphones: (mine, r) => {
+    const col = C(anyOf(r, [0x2c2f36, G.pink, G.blue, 0xffffff]), { roughness: 0.4 });
+    return [
+      [cylG(0.05, 0.06, 0.03).translate(0, 0.015, 0), M.dark],
+      [cylG(0.012, 0.012, 0.3, 6).translate(0, 0.17, 0), M.steel],
+      [new THREE.TorusGeometry(0.12, 0.02, 6, 16, Math.PI).translate(0, 0.3, 0), col],
+      [cylG(0.055, 0.055, 0.05, 12).rotateZ(Math.PI / 2).translate(-0.12, 0.3, 0), col],
+      [cylG(0.055, 0.055, 0.05, 12).rotateZ(Math.PI / 2).translate(0.12, 0.3, 0), col],
+    ];
+  },
+  fan: (mine, r) => {
+    const col = C(anyOf(r, [PASTEL.mint, PASTEL.sky, PASTEL.pink, 0xffffff]), { roughness: 0.5 });
+    return [
+      [cylG(0.08, 0.09, 0.03, 14).translate(0, 0.015, 0), col],
+      [cylG(0.015, 0.015, 0.2, 6).translate(0, 0.12, 0), M.steel],
+      [new THREE.TorusGeometry(0.12, 0.012, 6, 20).translate(0, 0.3, 0), col],
+      [sphG(0.035, 8).translate(0, 0.3, 0), M.dark],
+      ...[0, 1, 2].map((k) => [boxG(0.2, 0.05, 0.005).rotateZ((k * Math.PI) / 3).translate(0, 0.3, 0.01), M.white]),
+    ];
+  },
+  fishbowl: (mine, r) => [
+    [cylG(0.08, 0.09, 0.02, 14).translate(0, 0.01, 0), C(0xe8d9b5, { roughness: 0.9 })],
+    [sphG(0.15, 16).translate(0, 0.15, 0), M.bowl],
+    [sphG(0.04, 8).scale(1.6, 1, 0.7).translate(0.02, 0.15, 0), C(0xff8c1a, { roughness: 0.4 })],
+  ],
+  trophy: (mine, r) => [
+    [boxG(0.14, 0.06, 0.14).translate(0, 0.03, 0), M.dark],
+    [cylG(0.02, 0.03, 0.1, 8).translate(0, 0.11, 0), M.gold],
+    [cylG(0.1, 0.05, 0.14, 14).translate(0, 0.23, 0), M.gold],
+    [new THREE.TorusGeometry(0.045, 0.012, 6, 10).translate(-0.1, 0.24, 0), M.gold],
+    [new THREE.TorusGeometry(0.045, 0.012, 6, 10).translate(0.1, 0.24, 0), M.gold],
+  ],
+  donut: (mine, r) => [
+    [cylG(0.16, 0.14, 0.02, 16).translate(0, 0.01, 0), M.white],
+    [new THREE.TorusGeometry(0.075, 0.04, 8, 14).rotateX(Math.PI / 2).translate(0, 0.06, 0), C(anyOf(r, [G.pink, PASTEL.lavender, 0x8b5a2b]), { roughness: 0.6 })],
+  ],
+};
+M.bowl = new THREE.MeshStandardMaterial({ color: 0xcfefff, roughness: 0.05, transparent: true, opacity: 0.4, depthWrite: false });
+M.gold = mat(0xf4c542, { roughness: 0.25, metalness: 0.8 });
+M.decorVC = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
@@ -418,9 +543,9 @@ export class Floor {
     this.liftAndPlants();
     this.nav = new Nav(W, D, this.blocks);
     this.plates = this.makePlates();
-    this.inner.add(this.plates);
 
     bake(this.inner);
+    this.inner.add(this.plates); // after baking: rebuilt whenever who sits where changes
     bake(this.facade);
     this.facade.traverse((o) => { o.userData.team = team; });
   }
@@ -443,61 +568,260 @@ export class Floor {
     this.zones[zone] = { x0, z0, x1, z1 };
   }
 
-  // Rows of desks: one seat per bot, each with a laptop and a little name flag.
+  // ---------- desks: a standalone workstation for every bot ----------
+
+  // Workstations sit on a loose, staggered grid; each one gets its own shape, colour,
+  // chair, angle and nudge (all seeded, so a floor looks the same on every reload),
+  // tried until it keeps a walking gap to its neighbours. A few cells are left for
+  // plants, a bookshelf or a whiteboard so the room doesn't read as a grid.
   desks() {
-    const g = this.inner;
-    const { rows, k, deskLen, D } = this.plan;
-    const cx = this.x0 + deskLen / 2;
-    const byRow = [];
-    for (let r = 0; r < rows; r++) {
-      const cz = -D / 2 + 7 + r * 7.6;
-      const accent = PRIMARY[r % 4];
-      g.add(box(deskLen, 0.12, 2.3, M.desk, cx, 1.45, cz, 0.05));
-      for (const ex of [-1, 1]) for (const ez of [-1, 1]) g.add(box(0.08, 1.4, 0.08, M.frame, cx + ex * (deskLen / 2 - 0.35), 0.7, cz + ez * 0.95));
-      // a low coloured divider down the middle of the row
-      g.add(box(deskLen - 0.8, 0.32, 0.06, C(accent, { roughness: 0.55 }), cx, 1.67, cz, 0.02));
-      this.solid(cx, cz, deskLen, 2.3);
-      const row = { near: [], far: [] };
-      for (const side of [-1, 1]) {
-        for (let j = 0; j < k; j++) {
-          // staggered, so nobody sits nose to nose and every flag is over its own laptop
-          const sx = this.x0 + deskLen - 1.7 - 3 * j - (side > 0 ? 1.5 : 0);
-          const sz = cz + side * 1.95;
-          g.add(cyl(0.42, 0.42, 0.9, C(PRIMARY[(j + r + (side > 0 ? 2 : 0)) % 4], { roughness: 0.5 }), sx, 0.45, sz));
-          this.round(sx, sz, 0.45);
-          g.add(box(0.85, 0.04, 0.58, M.laptop, sx, 1.53, cz + side * 0.55));
-          const hinge = new THREE.Group();
-          hinge.position.set(sx, 1.53, cz + side * 0.27);
-          hinge.rotation.x = -side * 0.28;
-          const lid = box(0.85, 0.58, 0.03, M.laptop, 0, 0.29, 0);
-          const display = new THREE.Mesh(new THREE.PlaneGeometry(0.76, 0.48), new THREE.MeshStandardMaterial({ color: 0x1d1d20, roughness: 0.3, emissive: 0x000000 }));
-          display.position.set(0, 0.29, side * 0.02);
-          display.userData.keep = true; // lights up per seat, so it keeps its own mesh
-          if (side < 0) display.rotation.y = Math.PI;
-          hinge.add(lid, display);
-          g.add(hinge);
-          // the name flag stands here, behind the laptop, once a bot owns the desk (see setPlates)
-          const px = sx;
-          const seat = {
-            pos: V(sx, 0.9, sz),
-            face: side > 0 ? Math.PI : 0,
-            approach: V(sx, 0, cz + side * 3.8),
-            display,
-            plate: V(px, 2.88, cz),
-          };
-          // side -1 sits on the far side of the desk, facing the camera
-          (side < 0 ? row.near : row.far).push(seat);
-        }
+    const { rows, cols, desks } = this.plan;
+    const r0 = rng(rows * 131 + cols * 17 + desks * 7);
+    const cells = [];
+    for (let c = 0; c < cols; c++) {
+      for (let r = rows - 1; r >= 0; r--) {
+        const x = this.deskRight - 0.6 - PX / 2 - c * PX;
+        const z = (r - (rows - 1) / 2) * PZ + (c % 2 ? PZ / 4 : -PZ / 4);
+        cells.push({ x, z });
       }
-      byRow.push(row);
     }
-    // Seats facing the camera first, nearest the corridor first, front rows first.
-    const order = [];
-    for (const key of ['near', 'far']) for (let j = 0; j < k; j++) for (let r = rows - 1; r >= 0; r--) order.push(byRow[r][key][j]);
-    return order;
+    const spare = new Set();
+    while (spare.size < cells.length - desks) spare.add(1 + Math.floor(r0() * (cells.length - 1)));
+    const placed = [];
+    const seats = [];
+    let ti = Math.floor(r0() * DESK_TYPES.length);
+    cells.forEach((cell, i) => {
+      if (spare.has(i)) { placed.push(this.nook(cell, r0)); return; }
+      const type = DESK_TYPES[(ti += 1 + (r0() < 0.3 ? 1 : 0)) % DESK_TYPES.length];
+      let st = null, best = null, bestBad = Infinity;
+      for (let tries = 0; tries < 24 && !st; tries++) {
+        const last = tries === 23;
+        const yaw = tries < 20 ? YAWS[Math.floor(r0() * YAWS.length)] : 0;
+        const jx = tries < 20 ? (r0() - 0.5) * 1.0 : 0, jz = tries < 20 ? (r0() - 0.5) * 1.0 : 0;
+        const cand = footprint(type, cell.x + jx, cell.z + jz, yaw);
+        const bad = this.clash(cand, placed);
+        if (bad < bestBad) { best = cand; bestBad = bad; }
+        if (!bad) st = cand;
+        else if (last) st = best;
+      }
+      placed.push(st);
+      seats.push(this.station(st, i));
+    });
+    return seats;
   }
 
-  // Every desk's name flag in one mesh, drawn from one canvas.
+  // how badly a candidate workstation crowds the ones already placed (0 = fine)
+  clash(s, placed) {
+    const { W, D } = this;
+    const d = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+    let bad = 0;
+    const over = (gap) => { if (gap < 0) bad += -gap; };
+    for (const c of [...s.circles, s.bot]) {
+      over(c.x - c.r - (-W / 2 + 1.3));
+      over(this.deskRight + 0.5 - (c.x + c.r));
+      over(D / 2 - 0.9 - (Math.abs(c.z) + c.r));
+    }
+    over(D / 2 - 1.3 - Math.abs(s.approach.z));
+    over(this.deskRight + 1.2 - s.approach.x);
+    over(s.approach.x - (-W / 2 + 1.4));
+    for (const p of placed) {
+      for (const a of s.circles) for (const b of p.circles) over(d(a, b) - a.r - b.r - 1.75);
+      for (const a of s.circles) {
+        if (p.bot) over(d(a, p.bot) - a.r - p.bot.r - 0.4);
+        if (p.approach) over(d(a, p.approach) - a.r - 1.05);
+      }
+      for (const b of p.circles) {
+        over(d(s.bot, b) - s.bot.r - b.r - 0.4);
+        over(d(s.approach, b) - b.r - 1.05);
+      }
+      if (p.bot) { over(d(s.bot, p.bot) - 2.7); over(d(s.approach, p.bot) - 1.7); over(d(p.approach, s.bot) - 1.7); }
+    }
+    return bad;
+  }
+
+  // A cell without a desk: plants, a bookshelf or a whiteboard.
+  nook(cell, r0) {
+    const g = this.inner;
+    const kind = ['plants', 'shelf', 'board', 'plants'][Math.floor(r0() * 4)];
+    const x = cell.x + (r0() - 0.5) * 0.8, z = cell.z + (r0() - 0.5) * 0.8;
+    const grp = new THREE.Group();
+    grp.position.set(x, 0, z);
+    grp.rotation.y = (r0() - 0.5) * 1.4;
+    g.add(grp);
+    if (kind === 'plants') {
+      for (let k = 0; k < 3; k++) {
+        const a = (k / 3) * Math.PI * 2 + r0();
+        grp.add(plant(Math.cos(a) * 0.75, Math.sin(a) * 0.75, 0.65 + r0() * 0.35));
+      }
+    } else if (kind === 'shelf') {
+      grp.add(box(2.2, 1.9, 0.6, M.wood, 0, 0.95, 0, 0.04));
+      for (let s = 0; s < 3; s++) {
+        grp.add(box(2.0, 0.05, 0.5, M.white, 0, 0.35 + s * 0.55, 0.06));
+        for (let b = 0; b < 7; b++) {
+          const hb = 0.3 + r0() * 0.15;
+          grp.add(box(0.18, hb, 0.4, C(DECOR_COLORS[(s * 7 + b) % DECOR_COLORS.length], { roughness: 0.6 }), -0.8 + b * 0.25, 0.38 + s * 0.55 + hb / 2, 0.08));
+        }
+      }
+      grp.add(plant(0.7, 0, 0.4).translateY(1.9));
+    } else {
+      grp.add(box(2.3, 1.4, 0.08, M.white, 0, 2.0, 0, 0.03));
+      grp.add(box(2.4, 0.08, 0.14, M.steel, 0, 1.28, 0.04));
+      for (const ex of [-1, 1]) {
+        grp.add(box(0.07, 2.7, 0.07, M.steel, ex * 1.1, 1.35, 0));
+        grp.add(box(0.07, 0.07, 0.9, M.steel, ex * 1.1, 0.06, 0));
+      }
+      // doodles: a little bar chart and some sticky notes
+      [G.blue, G.red, G.yellow, G.green].forEach((c, k) => grp.add(box(0.16, 0.2 + k * 0.15, 0.02, C(c, { roughness: 0.6 }), -0.8 + k * 0.25, 1.45 + (0.2 + k * 0.15) / 2, 0.05)));
+      [G.yellow, G.pink, PASTEL.mint, PASTEL.sky].forEach((c, k) => grp.add(box(0.26, 0.26, 0.02, C(c, { roughness: 0.7 }), 0.3 + (k % 2) * 0.35, 2.35 - Math.floor(k / 2) * 0.35, 0.05)));
+    }
+    const circle = { x, z, r: 1.15 };
+    this.round(x, z, 1.05);
+    return { circles: [circle], bot: null, approach: null };
+  }
+
+  // One workstation: desk, chair, laptop or monitor, all in the desk's own frame
+  // (the bot sits at the origin facing +z, the desk in front of it).
+  station(st, i) {
+    const r = rng(i * 977 + 31);
+    const pick = (a) => a[Math.floor(r() * a.length)];
+    const grp = new THREE.Group();
+    grp.position.set(st.x, 0, st.z);
+    grp.rotation.y = st.yaw;
+    this.inner.add(grp);
+    const type = st.type;
+    const h = type === 'standing' ? 1.85 : 1.45;
+    const legs = (w, d, y0, material, inset = 0.12) => {
+      for (const ex of [-1, 1]) for (const ez of [-1, 1]) grp.add(box(0.07, y0, 0.07, material, ex * (w / 2 - inset), y0 / 2, 1.45 + ez * (d / 2 - inset)));
+    };
+    let slots, flag;
+    if (type === 'wood') {
+      const top = pick([M.wood, M.walnut]);
+      grp.add(box(2.0, 0.1, 1.0, top, 0, h, 1.45, 0.03));
+      // trestle legs
+      for (const ex of [-1, 1]) {
+        grp.add(box(0.08, h - 0.05, 0.08, M.dark, ex * 0.82, (h - 0.05) / 2, 1.45));
+        grp.add(box(0.08, 0.08, 0.85, M.dark, ex * 0.82, 0.04, 1.45));
+      }
+      grp.add(box(1.64, 0.06, 0.06, M.dark, 0, 0.5, 1.45));
+      slots = [[-0.75, 1.2], [0.75, 1.2], [0.72, 1.75]];
+      flag = [-0.72, 1.82];
+    } else if (type === 'round') {
+      grp.add(cyl(0.9, 0.9, 0.08, pick([M.white, C(PASTEL.mint, { roughness: 0.6 }), C(PASTEL.pink, { roughness: 0.6 })]), 0, h, 1.45, 32));
+      grp.add(cyl(0.07, 0.09, h, M.dark, 0, h / 2, 1.45, 10));
+      grp.add(cyl(0.45, 0.5, 0.05, M.dark, 0, 0.03, 1.45, 20));
+      slots = [[-0.62, 1.2], [0.62, 1.2], [0.5, 1.92]];
+      flag = [-0.5, 1.95];
+    } else if (type === 'L') {
+      const top = pick([M.white, M.wood]);
+      const leg = C(pick([G.blue, G.red, G.green, G.yellow]), { roughness: 0.5 });
+      grp.add(box(2.0, 0.1, 1.0, top, 0, h, 1.45, 0.03));
+      grp.add(box(0.9, 0.1, 1.5, top, 1.45, h, 0.95, 0.03));
+      grp.add(box(0.06, h - 0.05, 0.9, leg, -0.95, (h - 0.05) / 2, 1.45));
+      grp.add(box(0.85, h - 0.05, 0.06, leg, 1.45, (h - 0.05) / 2, 0.22));
+      grp.add(box(0.06, h - 0.05, 0.06, leg, 1.0, (h - 0.05) / 2, 1.92));
+      slots = [[-0.75, 1.2], [1.45, 0.55], [1.45, 1.25]];
+      flag = [-0.72, 1.82];
+    } else if (type === 'standing') {
+      const top = pick([M.white, M.walnut, C(PASTEL.sky, { roughness: 0.6 })]);
+      grp.add(box(1.8, 0.08, 0.85, top, 0, h, 1.45, 0.03));
+      for (const ex of [-1, 1]) {
+        grp.add(box(0.12, h - 0.05, 0.12, M.steel, ex * 0.7, (h - 0.05) / 2, 1.45));
+        grp.add(box(0.1, 0.06, 0.8, M.steel, ex * 0.7, 0.03, 1.45));
+      }
+      grp.add(box(1.4, 0.05, 0.05, M.steel, 0, h - 0.25, 1.45));
+      // anti-fatigue mat to stand on
+      grp.add(box(1.3, 0.04, 0.9, C(pick([G.green, G.purple, G.teal]), { roughness: 0.9 }), 0, 0.02, 0, 0.02));
+      slots = [[-0.65, 1.22], [0.65, 1.22], [0.62, 1.7]];
+      flag = [-0.62, 1.72];
+    } else if (type === 'curved') {
+      const s = new THREE.Shape();
+      const a0 = Math.PI / 2 - 1.25, a1 = Math.PI / 2 + 1.25;
+      s.absarc(0, 0, 1.85, a0, a1, false);
+      s.absarc(0, 0, 0.95, a1, a0, true);
+      const geo = new THREE.ExtrudeGeometry(s, { depth: 0.1, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 2, curveSegments: 24 });
+      geo.rotateX(Math.PI / 2);
+      const top = shade(new THREE.Mesh(geo, C(pick([PASTEL.lavender, PASTEL.butter, PASTEL.peach]), { roughness: 0.6 })));
+      top.position.y = h + 0.05;
+      grp.add(top);
+      for (const a of [-0.95, 0, 0.95]) grp.add(cyl(0.05, 0.05, h, M.white, Math.sin(a) * 1.4, h / 2, Math.cos(a) * 1.4, 8));
+      slots = [[-1.16, 0.81], [1.16, 0.81], [0.7, 1.28]];
+      flag = [-0.72, 1.22];
+    } else {
+      grp.add(box(1.8, 0.12, 0.95, C(pick([PASTEL.mint, PASTEL.pink, PASTEL.butter, PASTEL.sky, PASTEL.lavender]), { roughness: 0.55 }), 0, h, 1.45, 0.05));
+      legs(1.8, 0.95, h - 0.06, M.dark, 0.15);
+      slots = [[-0.68, 1.2], [0.68, 1.2], [0.66, 1.75]];
+      flag = [-0.66, 1.78];
+    }
+    // the chair
+    let seatY = 0;
+    if (type !== 'standing') {
+      const style = pick(['stool', 'office', 'ball', 'pouf']);
+      const col = C(pick([G.blue, G.red, G.yellow, G.green, G.purple, G.teal, G.orange, G.pink]), { roughness: 0.5 });
+      if (style === 'stool') { grp.add(cyl(0.42, 0.42, 0.9, col, 0, 0.45, 0, 18)); seatY = 0.9; }
+      else if (style === 'ball') { grp.add(ball(0.47, col, 0, 0.47, 0, 18)); seatY = 0.92; }
+      else if (style === 'pouf') { grp.add(cyl(0.46, 0.5, 0.85, col, 0, 0.43, 0, 18)); grp.add(cyl(0.44, 0.44, 0.04, M.white, 0, 0.86, 0, 18)); seatY = 0.88; }
+      else {
+        grp.add(cyl(0.46, 0.46, 0.12, col, 0, 0.82, 0, 18));
+        grp.add(cyl(0.05, 0.05, 0.7, M.steel, 0, 0.42, 0, 8));
+        for (let k = 0; k < 5; k++) {
+          const a = (k / 5) * Math.PI * 2;
+          const leg = box(0.5, 0.05, 0.07, M.dark, Math.cos(a) * 0.25, 0.06, Math.sin(a) * 0.25);
+          leg.rotation.y = -a;
+          grp.add(leg);
+        }
+        grp.add(box(0.85, 0.75, 0.1, col, 0, 1.35, -0.62, 0.05));
+        seatY = 0.9;
+      }
+    }
+    // laptop or monitor; the screen lights up while its bot works
+    const display = new THREE.Mesh(new THREE.PlaneGeometry(0.76, 0.48), new THREE.MeshStandardMaterial({ color: 0x1d1d20, roughness: 0.3, emissive: 0x000000 }));
+    display.userData.keep = true;
+    display.rotation.y = Math.PI;
+    const screen = new THREE.Group();
+    if (type === 'curved' || (type !== 'standing' && r() < 0.35)) {
+      grp.add(box(0.36, 0.03, 0.26, M.dark, 0, h + 0.07, 1.75));
+      grp.add(box(0.06, 0.45, 0.06, M.dark, 0, h + 0.28, 1.8));
+      screen.position.set(0, h + 0.38, 1.78);
+      screen.add(box(1.0, 0.62, 0.05, M.dark, 0, 0.29, 0.02, 0.02));
+      grp.add(box(0.7, 0.02, 0.22, M.white, 0, h + 0.06, 1.25)); // keyboard
+      display.scale.set(1.2, 1.1, 1);
+      display.position.set(0, 0.29, -0.01);
+    } else {
+      grp.add(box(0.85, 0.04, 0.58, M.laptop, 0, h + 0.07, 1.4));
+      screen.position.set(0, h + 0.07, 1.68);
+      screen.rotation.x = 0.28;
+      screen.add(box(0.85, 0.58, 0.03, M.laptop, 0, 0.29, 0));
+      display.position.set(0, 0.29, -0.02);
+    }
+    screen.add(display);
+    grp.add(screen);
+
+    // obstacles for walkers: the desk and the chair
+    for (const c of st.circles) this.round(c.x, c.z, Math.max(0.5, c.r - 0.15));
+    this.round(st.x, st.z, type === 'standing' ? 0.35 : 0.45);
+
+    this.inner.updateMatrixWorld(true);
+    const inv = this.inner.matrixWorld.clone().invert();
+    const frame = new THREE.Matrix4().multiplyMatrices(inv, grp.matrixWorld);
+    const lid = new THREE.Matrix4().multiplyMatrices(inv, screen.matrixWorld);
+    const at = (x, y, z) => V(x, y, z).applyMatrix4(frame);
+    return {
+      pos: V(st.x, seatY, st.z),
+      face: st.yaw,
+      approach: V(st.approach.x, 0, st.approach.z),
+      display,
+      type,
+      h,
+      frame,
+      lid,
+      slots,
+      plate: at(flag[0], h + 1.42, flag[1]),
+      pole: at(flag[0], h + 0.66, flag[1]),
+    };
+  }
+
+  // Every desk's name flag in one mesh, drawn from one canvas; desk decorations in a
+  // few merged meshes. Both are rebuilt when who sits where changes.
   makePlates() {
     const n = this.seats.length, cols = 4, rowsN = Math.ceil(n / cols);
     const cw = 256, ch = 72;
@@ -516,6 +840,8 @@ export class Floor {
     this.poleMesh = new THREE.Mesh(new THREE.BufferGeometry(), M.frame);
     this.poleMesh.castShadow = true;
     for (const m of [this.plateMesh, this.poleMesh]) { m.userData.keep = true; m.visible = false; g.add(m); }
+    this.decor = new THREE.Group();
+    g.add(this.decor);
     this.plateKey = null;
     this.setPlates([]);
     return g;
@@ -534,7 +860,7 @@ export class Floor {
       p.rotateY(Math.PI / 4);
       p.translate(s.plate.x, s.plate.y, s.plate.z);
       plates.push(p);
-      poles.push(new THREE.CylinderGeometry(0.025, 0.025, 1.25, 6).translate(s.plate.x, 2.12, s.plate.z));
+      poles.push(new THREE.CylinderGeometry(0.025, 0.025, 1.3, 6).translate(s.pole.x, s.pole.y, s.pole.z));
     });
     for (const [mesh, list] of [[this.plateMesh, plates], [this.poleMesh, poles]]) {
       mesh.geometry.dispose();
@@ -544,12 +870,84 @@ export class Floor {
     }
   }
 
-  // names[i] = { name, color } for the bot at seat i, or nothing for a free desk
+  // Each bot's desk gets its own things, picked from its id so they never change.
+  decorate(names) {
+    for (const m of [...this.decor.children]) { m.geometry.dispose(); m.removeFromParent(); }
+    const buckets = new Map();
+    const put = (geo, material, m4) => {
+      let g = geo.applyMatrix4(m4);
+      if (g.index) { const n = g.toNonIndexed(); g.dispose(); g = n; }
+      for (const a of Object.keys(g.attributes)) if (a !== 'position' && a !== 'normal' && a !== 'uv') g.deleteAttribute(a);
+      if (!g.attributes.uv) g.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
+      if (!buckets.has(material)) buckets.set(material, []);
+      buckets.get(material).push(g);
+    };
+    const T = (x, y, z, ry = 0) => new THREE.Matrix4().makeRotationY(ry).setPosition(x, y, z);
+    this.seats.forEach((s, i) => {
+      const who = names[i];
+      if (!who) return;
+      const h = hashStr(who.id || who.name);
+      const r = rng(h);
+      const mine = C(parseInt(String(who.color).replace('#', '').slice(0, 6), 16) || 0x777777, { roughness: 0.45 });
+      // three things on the desk, all different
+      const bag = Object.keys(DECOR);
+      for (let k = 0; k < s.slots.length; k++) {
+        const name = bag.splice(Math.floor(r() * bag.length), 1)[0];
+        const [sx, sz] = s.slots[k];
+        const m4 = s.frame.clone().multiply(T(sx, s.h + 0.05, sz, (r() - 0.5) * 1.2));
+        for (const [geo, material] of DECOR[name](mine, r)) put(geo, material, m4);
+      }
+      // a rug under most desks
+      if (r() < 0.8) {
+        const rugC = C(DECOR_COLORS[Math.floor(r() * DECOR_COLORS.length)], { roughness: 0.95 });
+        const edge = C(PRIMARY[Math.floor(r() * 4)], { roughness: 0.9 });
+        if (r() < 0.6) {
+          put(new THREE.CircleGeometry(1.6, 32).rotateX(-Math.PI / 2), rugC, s.frame.clone().multiply(T(0, 0.012 + (i % 3) * 0.002, 0.75)));
+          put(new THREE.RingGeometry(1.46, 1.6, 32).rotateX(-Math.PI / 2), edge, s.frame.clone().multiply(T(0, 0.019 + (i % 3) * 0.002, 0.75)));
+        } else {
+          put(new THREE.PlaneGeometry(2.8, 2.8).rotateX(-Math.PI / 2), rugC, s.frame.clone().multiply(T(0, 0.012 + (i % 3) * 0.002, 0.75)));
+          for (const dz of [-1.1, 1.1]) put(new THREE.PlaneGeometry(2.8, 0.14).rotateX(-Math.PI / 2), edge, s.frame.clone().multiply(T(0, 0.019 + (i % 3) * 0.002, 0.75 + dz)));
+        }
+      }
+      // stickers on the back of the laptop lid or monitor
+      if (r() < 0.65) {
+        const n = 2 + Math.floor(r() * 3);
+        for (let k = 0; k < n; k++) {
+          const st = r() < 0.3 ? new THREE.BoxGeometry(0.11, 0.11, 0.006) : new THREE.CylinderGeometry(0.06, 0.06, 0.006, 12).rotateX(Math.PI / 2);
+          put(st, k === 0 ? mine : C(PRIMARY[Math.floor(r() * 4)], { roughness: 0.5 }), s.lid.clone().multiply(T(-0.28 + r() * 0.56, 0.12 + r() * 0.34, 0.035)));
+        }
+      }
+    });
+    // plain-coloured bits share one vertex-coloured mesh; glass, gold and lights keep theirs
+    const plain = [];
+    for (const [material, geos] of [...buckets]) {
+      if (material.transparent || material.metalness > 0.5 || material.emissive.getHex() !== 0) continue;
+      for (const g of geos) {
+        const n = g.attributes.position.count, col = new Float32Array(n * 3);
+        for (let q = 0; q < n; q++) col.set([material.color.r, material.color.g, material.color.b], q * 3);
+        g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+        plain.push(g);
+      }
+      buckets.delete(material);
+    }
+    if (plain.length) buckets.set(M.decorVC, plain);
+    for (const [material, geos] of buckets) {
+      const m = new THREE.Mesh(mergeGeometries(geos), material);
+      m.castShadow = true;
+      m.receiveShadow = true;
+      m.userData.keep = true;
+      this.decor.add(m);
+      for (const g of geos) g.dispose();
+    }
+  }
+
+  // names[i] = { id, name, color } for the bot at seat i, or nothing for a free desk
   setPlates(names) {
-    const key = this.seats.map((_, i) => (names[i] ? `${names[i].name}\u0001${names[i].color}` : '')).join('\u0002');
+    const key = this.seats.map((_, i) => (names[i] ? `${names[i].id}\u0001${names[i].name}\u0001${names[i].color}` : '')).join('\u0002');
     if (key === this.plateKey) return;
     this.plateKey = key;
     this.plateGeometry(names);
+    this.decorate(names);
     const x = this.plateCanvas.getContext('2d');
     const cw = 256, ch = 72, cols = 4;
     x.clearRect(0, 0, this.plateCanvas.width, this.plateCanvas.height);
@@ -834,10 +1232,6 @@ export class Floor {
       g.add(plant(x, z, sc));
       this.round(x, z, 0.42 * sc);
     }
-    for (let x = this.x0 + 3; x < this.deskRight - 2; x += 9) {
-      g.add(plant(x, -D / 2 + 1.0, 0.8));
-      this.round(x, -D / 2 + 1.0, 0.35);
-    }
   }
 
   // Path from where a bot stands to a target: out of its seat (exit), along the free
@@ -936,6 +1330,12 @@ export class Building {
     this.key = '';
     this.plan = floorPlan(1);
     this.layout = 'stack'; // or 'spread': every floor side by side, all open
+    this.decor = true; // desk decorations (off on the low quality tier)
+  }
+
+  setDecor(on) {
+    this.decor = on;
+    for (const f of this.floors.values()) f.decor.visible = on;
   }
 
   // biggest: bots on the busiest team, so every floor has a desk for each of its bots
@@ -953,6 +1353,7 @@ export class Building {
     this.order = teams.slice();
     teams.forEach((team, i) => {
       const f = new Floor(team, teams.length - i, plan);
+      f.decor.visible = this.decor;
       f.base = this.home(f);
       f.group.position.copy(f.base);
       this.root.add(f.group);

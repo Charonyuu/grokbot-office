@@ -36,7 +36,13 @@ Open http://127.0.0.1:4321/. Your bots appear on their own.
 
 ### Desks and break zones
 
-Every bot on a floor has **its own desk** with a little flag showing its name in its colour. Floors grow to fit: there is always a desk for every bot, however many you have (desk rows get longer, then more rows are added).
+Every bot on a floor has **its own standalone workstation** with a little flag showing its name in its colour. There are no long shared tables: desks are scattered in loose clusters with walking room between them, each turned its own way. Each one is different:
+
+- **Desk**: wooden, round café table, L-shaped corner desk, standing desk (with a mat), curved desk or a pastel desk; a laptop or a monitor and keyboard.
+- **Chair**: office chair, stool, exercise ball or pouf.
+- **Decorations**, picked from the bot's id so they never change between visits: a plant, cactus, lamp, mug, plush, mini flag, photo frame, books, headphones, desk fan, fishbowl, trophy or donut, often a rug under the desk and stickers on the laptop.
+
+A few spare spots become little nooks with plants, a bookshelf or a whiteboard. Floors grow to fit: there is always a desk for every bot, however many you have (the desk area gets more rows and columns). On low quality the decorations are left out to keep it fast.
 
 The rest of each floor is laid out like a Google office:
 
@@ -90,7 +96,7 @@ Everything stays on your machine. The server only listens on 127.0.0.1, reads th
 
 ## 中文說明
 
-把 Grok Bot 桌面版裡的 bot 變成 3D 辦公室裡的寵物。每個 bot 都有自己的專屬座位，桌上插著寫了名字的小旗子；忙的在座位上打字，需要你回覆的會在椅子上跳、座位周圍亮起黃色光圈（卡住的是紅色「!」），點一下「Answer in Grok Bot」就跳回那個對話。執行 `node bin/office.mjs`，打開 http://127.0.0.1:4321/ 就好，資料只在你自己的電腦上讀取。
+把 Grok Bot 桌面版裡的 bot 變成 3D 辦公室裡的寵物。每個 bot 都有自己的獨立座位（不是一整排長桌），桌上插著寫了名字的小旗子；忙的在座位上打字，需要你回覆的會在椅子上跳、座位周圍亮起黃色光圈（卡住的是紅色「!」），點一下「Answer in Grok Bot」就跳回那個對話。執行 `node bin/office.mjs`，打開 http://127.0.0.1:4321/ 就好，資料只在你自己的電腦上讀取。
 
 辦公室參考 Google 辦公室的配置，除了座位區，每層樓還有：
 
@@ -98,9 +104,11 @@ Everything stays on your machine. The server only listens on 127.0.0.1, reads th
 - 🏃 **運動區**：跑步機、桌球、投籃、瑜珈墊
 - 🎮 **休閒區**：沙發上睡午覺、懶骨頭打電動、大型機台、手足球、聊天
 
+座位一個個分開擺放、方向各不相同，中間留走道。桌子有木桌、圓桌、L 型桌、站立桌、弧形桌、粉彩桌，椅子有辦公椅、高腳凳、瑜珈球、懶骨頭坐墊；每個座位依 bot 固定配上不同的裝飾：盆栽、仙人掌、檯燈、馬克杯、娃娃、小旗、相框、書、耳機、小電扇、魚缸、獎盃、甜甜圈，還有地毯和筆電貼紙。空位會擺上植物、書架或白板。低畫質時會省略裝飾以保持流暢。
+
 bot 閒置時會離開座位，**走路**（不是瞬移）到這些區域找空位活動，過一陣子會換到別的區域；一接到工作就走回自己的座位開始打字。頭上的小圖示會顯示它正在做什麼，點開 bot 卡片也會寫出來（例如「Playing ping-pong · Gym」）。
 
-想一次看到全部的 bot：按電梯面板最上面的 **All bots**（或網址加 `?all`），所有樓層會攤開並排顯示；右側 Today 卡片也會列出每一個 bot。人數再多，樓層也會自動加長、加排，保證每個 bot 都有位子。側邊欄裡隱藏的 bot 也會顯示（放在 Hidden 樓層）；只想看側邊欄的 bot 可設 `GROKBOT_SIDEBAR_ONLY=1`。用 `?demo` 可以看 30 個 bot 的示範，`?demo&bots=60` 可以看更擠的辦公室。
+想一次看到全部的 bot：按電梯面板最上面的 **All bots**（或網址加 `?all`），所有樓層會攤開並排顯示；右側 Today 卡片也會列出每一個 bot。人數再多，座位區也會自動加排、加列，保證每個 bot 都有位子。側邊欄裡隱藏的 bot 也會顯示（放在 Hidden 樓層）；只想看側邊欄的 bot 可設 `GROKBOT_SIDEBAR_ONLY=1`。用 `?demo` 可以看 30 個 bot 的示範，`?demo&bots=60` 可以看更擠的辦公室。
 
 點子來自 [@0xCodila 的 GrokBot 即時儀表板](https://x.com/0xCodila/status/2116960213206966317)（未開源）；這是獨立的開源實作，程式、模型、版面和資料來源都是自己做的。與 xAI、Grok、Grok Bot 官方無關。
 
