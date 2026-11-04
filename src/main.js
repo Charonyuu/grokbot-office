@@ -26,7 +26,7 @@ scene.environmentIntensity = 0.5;
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0xd8d5ce, 1.15));
 const sun = new THREE.DirectionalLight(0xfff5e8, 2.1);
-Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 90 });
+Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 120 });
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.03;
 scene.add(sun, sun.target);
@@ -40,7 +40,7 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.screenSpacePanning = true;
-controls.minZoom = 0.3;
+controls.minZoom = 0.12;
 controls.maxZoom = 3;
 controls.minPolarAngle = 0.5;
 controls.maxPolarAngle = 1.25;
@@ -50,6 +50,20 @@ const botLayer = new BotLayer(building);
 botLayer.wanders = !new URLSearchParams(location.search).has('still');
 
 let halfH = 15;
+// Zoom that fits a w x d footprint (h tall) in the window, seen from the camera's corner.
+function fitZoom(w, d, h = 8) {
+  const aspect = innerWidth / innerHeight;
+  const across = (w + d) * Math.SQRT1_2;
+  const tall = across * 0.53 + h * 0.85;
+  return THREE.MathUtils.clamp(0.76 * Math.min((2 * halfH * aspect) / across, (2 * halfH) / tall), controls.minZoom, 1.6);
+}
+// keep the sun's shadow box just big enough for what is on screen
+function fitShadow() {
+  const e = building.extent();
+  const r = Math.max(24, Math.hypot(e.w, e.d) * 0.55);
+  Object.assign(sun.shadow.camera, { left: -r, right: r, top: r, bottom: -r, far: 60 + r * 2 });
+  sun.shadow.camera.updateProjectionMatrix();
+}
 function resize() {
   const w = innerWidth, h = innerHeight, aspect = w / h;
   halfH = Math.max(15, 19.5 / aspect);
@@ -104,23 +118,41 @@ function stepTween(dt) {
   if (t >= 1) tween.active = false;
 }
 
-let focus = null, selected = null;
+let focus = null, selected = null, spread = false;
 
 function focusFloor(team, instant = false) {
   focus = team && building.floor(team) ? team : null;
+  spread = false;
   building.showUpTo(focus);
   botLayer.focus = focus;
-  if (focus) flyTo(new THREE.Vector3(0, (building.floor(focus).number - 1) * H + 1.2, 0), 0.9);
-  else flyTo(new THREE.Vector3(0, (building.count * H) / 2 - 2, 0), Math.min(1, halfH / ((building.count * H) / 2 + 12)));
+  botLayer.spread = false;
+  fitShadow();
+  const { W, D } = building.plan;
+  if (focus) flyTo(new THREE.Vector3(0, (building.floor(focus).number - 1) * H + 1.2, 0), fitZoom(W, D));
+  else flyTo(new THREE.Vector3(0, (building.count * H) / 2 - 2, 0), Math.min(1, halfH / ((building.count * H) / 2 + 12), fitZoom(W, D, building.count * H)));
   if (instant) { tween.dur = 0.001; building.snap(); }
-  ui.setFocus(focus);
+  ui.setFocus(focus, false);
+}
+
+// Every floor side by side and open, so every bot is in sight at once.
+function spreadOut(instant = false) {
+  focus = null;
+  spread = true;
+  building.spread();
+  botLayer.focus = null;
+  botLayer.spread = true;
+  fitShadow();
+  const e = building.extent();
+  flyTo(new THREE.Vector3(0, 1.2, 0), fitZoom(e.w, e.d), 1.4);
+  if (instant) { tween.dur = 0.001; building.snap(); }
+  ui.setFocus(null, true);
 }
 
 function select(id) {
   selected = id && state.bots.has(id) ? id : null;
   botLayer.selected = selected;
   ui.setSelected(selected);
-  if (selected) {
+  if (selected && !spread) {
     const team = state.bots.get(selected).team;
     if (team !== focus) focusFloor(team);
   }
@@ -129,7 +161,10 @@ function select(id) {
 const ui = createUI(document.getElementById('ui'), {
   state,
   onFloor: (team) => { select(null); focusFloor(team); },
+  onSpread: () => { select(null); spreadOut(); },
   onSelect: select,
+  activityOf: (id) => botLayer.activityOf(id),
+  places: (team) => botLayer.places(team),
   onZoom: (d) => flyTo(controls.target.clone(), THREE.MathUtils.clamp(camera.zoom * (d > 0 ? 1.25 : 0.8), controls.minZoom, controls.maxZoom), 0.35, 0),
 });
 
@@ -161,7 +196,8 @@ renderer.domElement.addEventListener('pointerup', (e) => {
 addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (selected) select(null);
-  else focusFloor(null);
+  else if (spread || focus) focusFloor(null);
+  else spreadOut();
 });
 
 // --- data ---
@@ -169,16 +205,21 @@ const instantUntil = performance.now() + 1500;
 let started = false;
 subscribe((kind) => {
   if (kind === 'roster' || kind === 'status') {
-    const rebuilt = building.setTeams(state.teams);
+    const per = new Map();
+    for (const b of state.bots.values()) per.set(b.team, (per.get(b.team) || 0) + 1);
+    const rebuilt = building.setTeams(state.teams, Math.max(1, ...per.values()));
     botLayer.sync(state, performance.now() < instantUntil);
     if (!started) {
       started = true;
       const firstWaiting = [...state.bots.values()].find((b) => b.state === 'waiting');
-      focusFloor(firstWaiting?.team || state.teams[0]);
+      const q = new URLSearchParams(location.search);
+      if (q.has('all')) spreadOut(true);
+      else focusFloor((q.get('floor') && building.floor(q.get('floor')) ? q.get('floor') : null) || firstWaiting?.team || state.teams[0]);
       tween.dur = 0.01;
     } else if (rebuilt) {
-      if (focus && !building.floor(focus)) focusFloor(null);
-      else building.showUpTo(focus);
+      if (spread) spreadOut();
+      else if (focus && !building.floor(focus)) focusFloor(null);
+      else focusFloor(focus);
     }
   }
   ui.render();
@@ -215,7 +256,13 @@ renderer.setAnimationLoop((now) => {
 
 // Hooks for scripted recordings (promo videos).
 window.__office = {
-  focusFloor, select, ingest,
+  focusFloor, spreadOut, select, ingest, botLayer, building, controls, camera,
+  // jump the camera to a spot on the focused floor (screenshots of one zone)
+  look(x, z, zoom = 1.6) {
+    const f = focus && building.floor(focus);
+    const y = f ? f.group.position.y + 1.2 : 1.2;
+    flyTo(new THREE.Vector3(x, y, z), zoom, 0.001, 0);
+  },
   // push the camera in on one bot (close-ups in recordings)
   closeUp(id, zoom = 2.2, dur = 1.2) {
     const b = botLayer.get(id);
@@ -223,6 +270,10 @@ window.__office = {
     const v = new THREE.Vector3();
     b.body.getWorldPosition(v);
     flyTo(v, zoom, dur, 0.05);
+  },
+  // run the office forward without drawing (tests on slow headless machines)
+  warp(seconds = 1) {
+    for (let i = 0; i < seconds * 20; i++) { elapsed += 0.05; stepTween(0.05); building.update(0.05); botLayer.update(0.05, elapsed); }
   },
   quality: () => quality.tier,
   stats: () => ({ frame: renderer.info.render.frame, calls: renderer.info.render.calls, tris: renderer.info.render.triangles, geos: renderer.info.memory.geometries }),
