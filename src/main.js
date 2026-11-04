@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { CSS2DRenderer } from 'three/addons/renderers/CSS2DRenderer.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
-import { Building, H } from './world.js';
+import { NIGHT_MATS, Building, H } from './world.js';
 import { BotLayer } from './bots.js';
 import { state, subscribe, ingest } from './store.js';
 import { startFeed } from './feed.js';
@@ -24,7 +24,8 @@ const pmrem = new THREE.PMREMGenerator(renderer);
 scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
 scene.environmentIntensity = 0.5;
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0xd8d5ce, 1.15));
+const hemi = new THREE.HemisphereLight(0xffffff, 0xd8d5ce, 1.15);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xfff5e8, 2.1);
 Object.assign(sun.shadow.camera, { left: -30, right: 30, top: 30, bottom: -30, near: 1, far: 120 });
 sun.shadow.bias = -0.0004;
@@ -46,6 +47,45 @@ controls.minPolarAngle = 0.5;
 controls.maxPolarAngle = 1.25;
 
 const building = new Building(scene);
+
+// Day and night, by the viewer's clock (?time=19 to try an hour): cool bright mornings,
+// neutral days, an orange sunset, then a dark blue night with the desk lamps glowing.
+// [hour, background, sky, ground, hemi, sun colour, sun, environment, glass, glass opacity, lamp glow]
+const SKY = [
+  [0, 0x1c2542, 0x6f7fb8, 0x2a2f45, 0.4, 0x9fb4ff, 0.3, 0.12, 0x23345e, 0.6, 5],
+  [5.5, 0x2a3358, 0x8090c4, 0x34394f, 0.6, 0xa9b8ff, 0.45, 0.2, 0x2e3f6a, 0.55, 4],
+  [7, 0xdfe6f2, 0xe8efff, 0xd2d6de, 1.1, 0xeaf0ff, 1.9, 0.45, 0xe6eef8, 0.35, 1.2],
+  [11, 0xebebec, 0xffffff, 0xd8d5ce, 1.15, 0xfff5e8, 2.1, 0.5, 0xeef3f6, 0.35, 1.2],
+  [16, 0xece9e4, 0xfffaf0, 0xd8d2c6, 1.12, 0xffeed8, 2.05, 0.5, 0xf1f0ea, 0.35, 1.2],
+  [18.5, 0xf1c7a0, 0xffd6ad, 0xc9a68a, 1.0, 0xff9a4d, 2.0, 0.42, 0xffc58f, 0.42, 2.2],
+  [20, 0x343a62, 0x8a8fc9, 0x34364c, 0.62, 0xb9a6ff, 0.55, 0.22, 0x2c3a68, 0.55, 4],
+  [24, 0x1c2542, 0x6f7fb8, 0x2a2f45, 0.4, 0x9fb4ff, 0.3, 0.12, 0x23345e, 0.6, 5],
+];
+const fixedHour = parseFloat(new URLSearchParams(location.search).get('time'));
+const _ca = new THREE.Color(), _cb = new THREE.Color();
+const mixC = (out, a, b, k) => out.copy(_ca.setHex(a)).lerp(_cb.setHex(b), k);
+function daylight() {
+  const d = new Date();
+  const h = Number.isFinite(fixedHour) ? ((fixedHour % 24) + 24) % 24 : d.getHours() + d.getMinutes() / 60;
+  let i = 0;
+  while (SKY[i + 1][0] <= h) i++;
+  const a = SKY[i], b = SKY[i + 1], k = (h - a[0]) / (b[0] - a[0]);
+  const n = (j) => a[j] + (b[j] - a[j]) * k;
+  mixC(scene.background, a[1], b[1], k);
+  mixC(hemi.color, a[2], b[2], k);
+  mixC(hemi.groundColor, a[3], b[3], k);
+  hemi.intensity = n(4);
+  mixC(sun.color, a[5], b[5], k);
+  sun.intensity = n(6);
+  scene.environmentIntensity = n(7);
+  mixC(NIGHT_MATS.glass.color, a[8], b[8], k);
+  NIGHT_MATS.glass.opacity = n(9);
+  NIGHT_MATS.bulb.emissiveIntensity = n(10);
+  // light text on the dark sky for the bits of UI drawn straight on the background
+  document.body.classList.toggle('night', scene.background.getHSL({}).l < 0.35);
+}
+daylight();
+setInterval(daylight, 20e3);
 const botLayer = new BotLayer(building);
 botLayer.wanders = !new URLSearchParams(location.search).has('still');
 if (new URLSearchParams(location.search).has('debug')) import('./debug.js').then((m) => m.startDebug());

@@ -102,6 +102,7 @@ It sets itself: it starts at medium, watches how long frames take, steps down if
 ## Without the app
 
 - `?demo` runs a made-up company of 30 bots on four floors, about half of them on a break, so you can look around anywhere. `?demo&bots=60` pads it out to 60 bots (the extras share one big floor) to see a crowded office.
+- The office follows your local clock (cool morning, warm sunset, dark night with glowing desk lamps); `?time=19` fixes the hour. Bots get a confetti burst when they finish, and now and then show a mood bubble (💡 ⌨️ ☕ at work, ❤️ 🎵 💤 😋 on a break).
 - `?topic=<ntfy topic>` reads status lines from an [ntfy](https://ntfy.sh) topic instead, for bots that report in themselves. [docs/grokbot-setup.md](docs/grokbot-setup.md) has a prompt that sets this up. Messages are one JSON line each:
 
 ```json
@@ -140,6 +141,8 @@ Everything stays on your machine. The server only listens on 127.0.0.1, reads th
 bot 閒置時會離開座位，**走路**（擺手邁步，不是瞬移）到這些區域找空位活動：躺在沙發上睡午覺、拿手把打電動、跑步機上跑步、揮桌球拍、投籃、做瑜珈、捧碗吃飯、喝咖啡、比手畫腳聊天、轉手足球桿，過一陣子會換到別的區域；一接到工作就走回自己的座位開始打字。頭上的小圖示會顯示它正在做什麼，點開 bot 卡片也會寫出來（例如「Playing ping-pong · Gym」）。
 
 想一次看到全部的 bot：按電梯面板最上面的 **All bots**（或網址加 `?all`），所有樓層會攤開並排顯示；右側 Today 卡片也會列出每一個 bot。人數再多，座位區也會自動加排、加列，保證每個 bot 都有位子。側邊欄裡隱藏的 bot 也會顯示（放在 Hidden 樓層）；只想看側邊欄的 bot 可設 `GROKBOT_SIDEBAR_ONLY=1`。用 `?demo` 可以看 30 個 bot 的示範，`?demo&bots=60` 可以看更擠的辦公室。
+
+辦公室會跟著你的本地時間變化（早上明亮、黃昏偏橘、晚上變暗、桌燈亮起），網址加 `?time=19` 可固定時間。bot 完成工作時會冒出彩帶，平常也會不時冒出心情泡泡（工作時 💡 ⌨️ ☕，休息時 ❤️ 🎵 💤 😋）。
 
 點子來自 [@0xCodila 的 GrokBot 即時儀表板](https://x.com/0xCodila/status/2116960213206966317)（未開源）；這是獨立的開源實作，程式、模型、版面和資料來源都是自己做的。與 xAI、Grok、Grok Bot 官方無關。
 

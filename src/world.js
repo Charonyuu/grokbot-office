@@ -179,6 +179,8 @@ const DECOR = {
 };
 M.bowl = new THREE.MeshStandardMaterial({ color: 0xcfefff, roughness: 0.05, transparent: true, opacity: 0.4, depthWrite: false });
 M.gold = mat(0xf4c542, { roughness: 0.25, metalness: 0.8 });
+// what the day/night cycle (main.js) tints: window glass and the desk lamps' bulbs
+export const NIGHT_MATS = { glass: M.glass, bulb: C(0xfff3b0, { emissive: 0xffd36b, emissiveIntensity: 1.2 }) };
 M.decorVC = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6 });
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);

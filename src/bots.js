@@ -193,6 +193,7 @@ export class Bot {
   dispose() {
     this.root.removeFromParent();
     this.el.remove();
+    this.moodEl?.remove();
     this.mat.dispose();
     this.limbs.geometry.dispose();
     this.limbs.skeleton.dispose();
@@ -499,6 +500,23 @@ function posture(bot, c) {
   return P;
 }
 
+// Confetti when a bot finishes something: little stars from one instanced mesh per floor.
+const BURST = 36, POOL = BURST * 5, LIFE = 1.5;
+const starShape = new THREE.Shape();
+for (let i = 0; i < 10; i++) { const a = Math.PI / 2 + (i * Math.PI) / 5, r = i % 2 ? 0.045 : 0.11; starShape[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r); }
+const starGeo = new THREE.ShapeGeometry(starShape);
+const confettiMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, toneMapped: false });
+const CONFETTI = [0xff4d6d, 0xffc300, 0x3ddc97, 0x4cc9f0, 0xb388ff, 0xff8fab, 0xffffff].map((c) => new THREE.Color(c));
+const _m4 = new THREE.Matrix4(), _q4 = new THREE.Quaternion(), _e4 = new THREE.Euler(), _s4 = new THREE.Vector3();
+
+// Mood bubbles: now and then a small emoji pops above a bot's head.
+const MOODS = { nap: ['💤'], eat: ['😋'], snack: ['😋'], coffee: ['☕', '❤️'], game: ['🎵', '❤️'], relax: ['🎵', '❤️', '💤'] };
+const MOOD_FOR = 2.4; // seconds a mood bubble stays up
+const pickMood = (s, act) => {
+  const list = s === 'working' ? ['💡', '⌨️', '☕'] : MOODS[act] || ['❤️', '🎵'];
+  return list[Math.floor(Math.random() * list.length)];
+};
+
 export class BotLayer {
   constructor(building) {
     this.building = building;
@@ -559,7 +577,7 @@ export class BotLayer {
         bot.seat = seat;
         if (rec.doneAt && rec.doneAt !== bot.seenDone) {
           bot.seenDone = rec.doneAt;
-          if (!instant && bot.placed === true) { bot.celebrate = 1.1; bot.doneShow = 2.2; }
+          if (!instant && bot.placed === true) { bot.celebrate = 1.1; bot.doneShow = 2.2; this.burst(bot); }
         }
         this.retarget(bot, instant);
       });
@@ -786,11 +804,13 @@ export class BotLayer {
       const near = this.spread || (this.focus ? f.team === this.focus : f.number === this.building.count);
       const say = this.focus && !this.spread ? true : look === 'waiting' || look === 'error';
       bot.label.visible = shown(f) && (bot.id === this.selected || (near && (named || say)));
+      this.mood(bot, dt, s, act, moving || party, shown(f) && near);
     }
 
     alertMat.waiting.opacity = 0.55 + 0.35 * Math.sin(t * 5);
     alertMat.error.opacity = 0.55 + 0.4 * Math.sin(t * 9);
     for (const f of floors) if (shown(f)) this.floorFx(f, t);
+    this.confetti(dt);
 
     const sel = this.selected && this.bots.get(this.selected);
     this.ring.visible = !!(sel && shown(sel.floor));
@@ -798,6 +818,87 @@ export class BotLayer {
       if (this.ring.parent !== sel.floor.inner) sel.floor.inner.add(this.ring);
       this.ring.position.set(sel.root.position.x, 0.03, sel.root.position.z);
     }
+  }
+
+  // a burst of star confetti over a bot's head (pooled per floor)
+  burst(bot) {
+    const f = bot.floor;
+    if (!f) return;
+    if (!f.confetti) {
+      const mesh = new THREE.InstancedMesh(starGeo, confettiMat, POOL);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.frustumCulled = false;
+      mesh.userData.keep = true;
+      for (let i = 0; i < POOL; i++) { mesh.setColorAt(i, CONFETTI[i % CONFETTI.length]); mesh.setMatrixAt(i, _m4.makeScale(0, 0, 0)); }
+      f.inner.add(mesh);
+      f.confetti = { mesh, next: 0, parts: Array.from({ length: POOL }, () => ({ age: LIFE, p: V(0, 0, 0), v: V(0, 0, 0), r: V(0, 0, 0), w: V(0, 0, 0) })) };
+      (this.confettiFloors ||= new Set()).add(f);
+    }
+    const c = f.confetti, top = bot.pos.clone().add(bot.side);
+    top.y += bot.height + 0.35;
+    for (let k = 0; k < BURST; k++) {
+      const q = c.parts[c.next];
+      c.next = (c.next + 1) % POOL;
+      const a = Math.random() * Math.PI * 2, out = 1 + Math.random() * 2.2;
+      q.age = 0;
+      q.p.copy(top);
+      q.v.set(Math.cos(a) * out, 3 + Math.random() * 3, Math.sin(a) * out);
+      q.r.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+      q.w.set((Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14);
+    }
+  }
+
+  confetti(dt) {
+    if (!this.confettiFloors) return;
+    for (const f of this.confettiFloors) {
+      const c = f.confetti;
+      let live = 0;
+      c.parts.forEach((q, i) => {
+        if (q.age >= LIFE) return;
+        q.age += dt;
+        live++;
+        q.v.y -= 7 * dt;
+        q.v.multiplyScalar(1 - 1.2 * dt);
+        q.p.addScaledVector(q.v, dt);
+        q.r.addScaledVector(q.w, dt);
+        const k = q.age >= LIFE ? 0 : Math.min(1, (LIFE - q.age) / 0.4, q.age / 0.08);
+        c.mesh.setMatrixAt(i, _m4.compose(q.p, _q4.setFromEuler(_e4.set(q.r.x, q.r.y, q.r.z)), _s4.setScalar(k)));
+      });
+      c.mesh.visible = live > 0;
+      if (live || c.dirty) c.mesh.instanceMatrix.needsUpdate = true;
+      c.dirty = live > 0;
+    }
+  }
+
+  // an emoji that pops up over the head every 15-40 s (never while it needs you)
+  mood(bot, dt, s, act, busy, visible) {
+    if (bot.moodIn === undefined) bot.moodIn = 4 + Math.random() * 30;
+    if (bot.moodAge < MOOD_FOR) {
+      // pop in, float up a little, fade out
+      bot.moodAge += dt;
+      const u = bot.moodAge / MOOD_FOR, hide = !visible || (s !== 'working' && s !== 'resting');
+      const o = hide || u >= 1 ? 0 : Math.min(1, u / 0.12, (1 - u) / 0.2);
+      const sc = u < 0.12 ? 0.6 + (0.45 * u) / 0.12 : 1;
+      bot.moodEl.firstChild.style.opacity = o.toFixed(2);
+      bot.moodEl.firstChild.style.transform = `translateY(${(6 - 16 * u).toFixed(1)}px) scale(${sc.toFixed(2)})`;
+      return;
+    }
+    bot.moodIn -= dt;
+    if (bot.moodIn > 0) return;
+    bot.moodIn = 15 + Math.random() * 25;
+    if (busy || !visible || (s !== 'working' && s !== 'resting') || bot.id === this.selected) return;
+    if (!bot.moodEl) {
+      const el = document.createElement('div');
+      el.className = 'mood';
+      el.style.pointerEvents = 'none';
+      el.innerHTML = '<span style="display:block;font-size:calc(17px * var(--z, 1));line-height:1;padding:4px 6px;border-radius:999px;background:rgba(255,255,255,.92);box-shadow:0 2px 8px rgba(0,0,0,.15);opacity:0"></span>';
+      bot.moodEl = el;
+      bot.moodObj = new CSS2DObject(el);
+      bot.root.add(bot.moodObj);
+    }
+    bot.moodObj.position.set(0.55, bot.height + 0.25, 0);
+    bot.moodEl.firstChild.textContent = pickMood(s, act);
+    bot.moodAge = 0;
   }
 
   // the bot standing at a spot, if it has got there and is still on its break
