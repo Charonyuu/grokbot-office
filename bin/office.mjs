@@ -25,6 +25,8 @@ const COLOR = {
 const WORKING_FOR = 30 * 60e3; // a question with no reply yet counts as work for this long
 const FRESH = 2 * 60e3; // output this recent still counts as working
 const ASKING_FOR = 24 * 3600e3; // an unanswered question from the bot counts as waiting for this long
+const ALL = process.env.GROKBOT_ALL === '1';
+const SIDEBAR_ONLY = process.env.GROKBOT_SIDEBAR_ONLY === '1';
 
 // ---------- reading the cache ----------
 
@@ -57,12 +59,12 @@ function readCache() {
 
 const snippet = (s) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, 120);
 
-function teamOf(row, sections) {
+function teamOf(row, sections, hidden) {
   for (const s of sections) {
     const ids = s.agentIds || s.items || s.memberIds || [];
-    if (ids.includes?.(row.id)) return s.name || s.title || 'Team';
+    if (ids.includes?.(row.id) || ids.some?.((x) => x?.id === row.id || x?.agentId === row.id)) return s.name || s.title || 'Team';
   }
-  return 'My bots';
+  return hidden ? 'Hidden' : 'My bots';
 }
 
 // Who is doing what, from the roster row and its cached transcript.
@@ -106,9 +108,12 @@ function snapshot(full) {
   const now = Date.now();
   if (!cache) return full ? [{ t: 'roster', bots: [] }] : [];
   const out = [];
-  const rows = cache.roster.filter((r) => !r.isRemovedFromSidebar && !r.isHiddenFromSidebar && !r.isGroup);
+  // Every bot you have, including ones hidden from the app's sidebar (they get their own
+  // "Hidden" floor unless they sit in a section). GROKBOT_SIDEBAR_ONLY=1 shows only the
+  // sidebar's bots, as before; bots removed from the sidebar stay out unless GROKBOT_ALL=1.
+  const rows = cache.roster.filter((r) => !r.isGroup && (ALL || !r.isRemovedFromSidebar) && (!SIDEBAR_ONLY || !r.isHiddenFromSidebar));
   const bots = rows.map((r) => ({
-    id: r.id, name: r.name || 'Bot', team: teamOf(r, cache.sections),
+    id: r.id, name: r.name || 'Bot', team: teamOf(r, cache.sections, r.isHiddenFromSidebar || r.isRemovedFromSidebar),
     shape: r.avatarShape || 'blob', color: COLOR[r.avatarColor] || '#777777',
     chat: `grokbot://agent/${encodeURIComponent(r.id)}`, // opens this bot in the desktop app
   }));
