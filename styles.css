@@ -153,6 +153,8 @@ body.night .ib-h, body.night .ib-more { color: #dfe4f5; }
 #zoom { position: absolute; right: 16px; bottom: 16px; display: flex; padding: 3px; }
 #zoom button { width: 30px; height: 26px; display: grid; place-items: center; border-radius: 999px; }
 #zoom button:hover { background: var(--row); }
+#hint { position: absolute; right: 124px; bottom: 22px; font-size: 11px; color: #8a8f98; pointer-events: none; white-space: nowrap; }
+body.night #hint { color: #b9c0d6; }
 
 /* bubbles over bots */
 .bub { display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border-radius: 13px; background: #fff; color: #1d1d20; font: 800 11px 'Plus Jakarta Sans', system-ui, sans-serif; white-space: nowrap; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.16); position: relative; transform: translateY(-6px); }
@@ -228,7 +230,7 @@ body.night .ib-h, body.night .ib-more { color: #dfe4f5; }
   .lb-btn { width: 32px; height: 32px; }
   #inbox { display: none; }
   #card { left: 12px; right: 12px; top: auto; bottom: 12px; width: auto; max-height: 44vh; }
-  #zoom { display: none; }
+  #zoom, #hint { display: none; }
 }
 
 /* keeps black pets visible on dark panels */

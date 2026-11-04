@@ -95,7 +95,7 @@ export function createUI(root, { state, onFloor, onSpread, onSelect, onZoom, act
     <nav id="lift" class="panel" aria-label="Floors"></nav>
     <section id="card" class="panel"></section>
     <section id="inbox"></section>
-    <div id="zoom" class="panel pill"><button data-zoom="-1" aria-label="Zoom out">${ICON.minus}</button><button data-zoom="1" aria-label="Zoom in">${ICON.plus}</button></div>`;
+    <div id="hint">Drag to move · Right-drag or ⇧-drag to rotate · Scroll or pinch to zoom · Double-click to reset</div><div id="zoom" class="panel pill"><button data-zoom="0" aria-label="Reset view" title="Reset view"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button><button data-zoom="-1" aria-label="Zoom out">${ICON.minus}</button><button data-zoom="1" aria-label="Zoom in">${ICON.plus}</button></div>`;
   const $ = (id) => root.querySelector(id);
 
   root.addEventListener('click', (e) => {

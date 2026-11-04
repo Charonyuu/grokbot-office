@@ -40,7 +40,11 @@ camera.position.copy(DIR).multiplyScalar(120);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
-controls.screenSpacePanning = true;
+// map-style: left-drag (one finger) slides the view along the floor; right-drag, or
+// Shift/Ctrl/⌘ + drag, orbits; wheel or pinch zooms (two-finger trackpad scroll pans, below)
+controls.screenSpacePanning = false;
+controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
+controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
 controls.minZoom = 0.12;
 controls.maxZoom = 3;
 controls.minPolarAngle = 0.5;
@@ -139,6 +143,9 @@ const tween = { active: false };
 // Moves between floors pull back a little mid-flight and swing round slightly, then settle.
 const AZ_HOME = Math.atan2(DIR.x, DIR.z);
 function flyTo(target, zoom, dur = 1.25, arc = 0.14) {
+  // drop any drag still gliding on (damping), so the flight lands where it should
+  controls._panOffset?.set(0, 0, 0);
+  controls._sphericalDelta?.set(0, 0, 0);
   const off = camera.position.clone().sub(controls.target);
   Object.assign(tween, {
     from: controls.target.clone(), to: target, z0: camera.zoom, z1: zoom, t: 0, dur, arc, active: true,
@@ -207,7 +214,7 @@ const ui = createUI(document.getElementById('ui'), {
   onSelect: select,
   activityOf: (id) => botLayer.activityOf(id),
   places: (team) => botLayer.places(team),
-  onZoom: (d) => flyTo(controls.target.clone(), THREE.MathUtils.clamp(camera.zoom * (d > 0 ? 1.25 : 0.8), controls.minZoom, controls.maxZoom), 0.35, 0),
+  onZoom: (d) => d === 0 ? resetView() : flyTo(controls.target.clone(), THREE.MathUtils.clamp(camera.zoom * (d > 0 ? 1.25 : 0.8), controls.minZoom, controls.maxZoom), 0.35, 0),
 });
 
 // --- picking ---
@@ -224,10 +231,13 @@ renderer.domElement.addEventListener('pointerdown', (e) => { down = { x: e.clien
 renderer.domElement.addEventListener('pointermove', (e) => {
   const h = hit(e, botLayer.pickables());
   botLayer.hovered = h?.object.userData.botId || null;
-  renderer.domElement.style.cursor = botLayer.hovered ? 'pointer' : '';
+  renderer.domElement.style.cursor = botLayer.hovered ? 'pointer' : down ? 'grabbing' : 'grab';
 });
 renderer.domElement.addEventListener('pointerup', (e) => {
-  if (!down || Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) return;
+  const d0 = down;
+  down = null;
+  renderer.domElement.style.cursor = botLayer.hovered ? 'pointer' : 'grab';
+  if (!d0 || Math.hypot(e.clientX - d0.x, e.clientY - d0.y) > 5) return;
   const b = hit(e, botLayer.pickables());
   if (b) return select(b.object.userData.botId);
   const slab = hit(e, building.slabs());
@@ -235,6 +245,44 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   if (team && team !== focus) { select(null); focusFloor(team); }
   else select(null);
 });
+// Two-finger trackpad scroll pans; a mouse wheel and a pinch (sent as ctrl + wheel) zoom.
+const _r = new THREE.Vector3(), _f = new THREE.Vector3();
+function panBy(dx, dy) {
+  const el = renderer.domElement;
+  const wpp = (camera.right - camera.left) / camera.zoom / el.clientWidth;
+  _r.setFromMatrixColumn(camera.matrix, 0).setY(0).normalize();
+  _f.subVectors(controls.target, camera.position).setY(0);
+  const tilt = Math.max(0.3, Math.sin(Math.atan2(camera.position.y - controls.target.y, _f.length())));
+  _f.normalize();
+  const move = _r.multiplyScalar(dx * wpp).addScaledVector(_f, (-dy * wpp) / tilt);
+  controls.target.add(move);
+  camera.position.add(move);
+  movingUntil = performance.now() + 300;
+}
+renderer.domElement.addEventListener('wheel', (e) => {
+  const mouse = e.deltaMode !== 0 || (!e.deltaX && e.wheelDeltaY && e.wheelDeltaY % 120 === 0);
+  if (e.ctrlKey || mouse) return; // OrbitControls zooms
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  tween.active = false;
+  panBy(e.deltaX, e.deltaY);
+}, { capture: true, passive: false });
+// keep the office in view: the point you look at stays over the building
+function clampView() {
+  const e = building.extent(), t = controls.target;
+  const x = THREE.MathUtils.clamp(t.x, -e.w / 2, e.w / 2), z = THREE.MathUtils.clamp(t.z, -e.d / 2, e.d / 2);
+  if (x === t.x && z === t.z) return;
+  camera.position.x += x - t.x;
+  camera.position.z += z - t.z;
+  t.x = x;
+  t.z = z;
+}
+function resetView() {
+  if (spread) spreadOut();
+  else focusFloor(focus);
+}
+renderer.domElement.addEventListener('dblclick', (e) => { if (!hit(e, botLayer.pickables())) resetView(); });
+renderer.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
 addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
   if (selected) select(null);
@@ -271,6 +319,7 @@ subscribe((kind) => {
 // a bit faster while the camera moves, and slow when the window isn't in front.
 let last = performance.now(), elapsed = 0, movingUntil = 0, lastZ = '';
 controls.addEventListener('change', () => { movingUntil = performance.now() + 300; });
+controls.addEventListener('start', () => { tween.active = false; }); // grabbing the view stops a camera flight
 renderer.setAnimationLoop((now) => {
   const c = quality.cfg;
   const busy = tween.active || now < movingUntil;
@@ -285,6 +334,7 @@ renderer.setAnimationLoop((now) => {
   stepTween(dt);
   building.update(dt);
   controls.update();
+  clampView();
   botLayer.update(dt, elapsed);
   sun.target.position.copy(controls.target);
   sun.position.copy(controls.target).add(SUN_OFFSET);
