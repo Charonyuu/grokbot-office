@@ -64,13 +64,12 @@ Or open http://127.0.0.1:4321/?debug for a panel with the same list, or http://1
 
 ### Desks and break zones
 
-Every bot on a floor has **its own standalone workstation** with a little flag showing its name in its colour. There are no long shared tables: desks are scattered in loose clusters with walking room between them, each turned its own way. Each one is different:
+Every bot on a floor has **its own standalone desk** with a little flag showing its name in its colour. There are no long shared tables. Desks are set out in tidy **pods of four**: two pairs facing each other across a low planter, on a straight grid with clear aisles between them, all on one carpet.
 
-- **Desk**: wooden, round café table, L-shaped corner desk, standing desk (with a mat), curved desk or a pastel desk; a laptop or a monitor and keyboard.
-- **Chair**: office chair, stool, exercise ball or pouf.
-- **Decorations**, picked from the bot's id so they never change between visits: a plant, cactus, lamp, mug, plush, mini flag, photo frame, books, headphones, desk fan, fishbowl, trophy or donut, often a rug under the desk and stickers on the laptop.
+- **One desk family**: the same light-oak desk, charcoal office chair, monitor, keyboard and white lamp at every seat, so the room looks calm and professional. The lamps glow at night.
+- **A little personality**: the back of each bot's chair is in its colour, and each desk has **one** personal thing in the same corner, picked from the bot's id so it never changes: a plant, cactus, mug, plush, photo frame, fishbowl, trophy, books, headphones or a donut.
 
-A few spare spots become little nooks with plants, a bookshelf or a whiteboard. Floors grow to fit: there is always a desk for every bot, however many you have (the desk area gets more rows and columns). On low quality the decorations are left out to keep it fast.
+A pod slot with nobody to seat gets a low bookshelf between two planters. Floors grow to fit: there is always a desk for every bot, however many you have (the desk area gets more pods). On low quality the personal things are left out to keep it fast.
 
 The rest of each floor is laid out like a Google office:
 
@@ -126,7 +125,7 @@ Everything stays on your machine. The server only listens on 127.0.0.1, reads th
 
 ## 中文說明
 
-把 Grok Bot 桌面版裡的 bot 變成 3D 辦公室裡的可愛 Q 版小人：大頭、小身體，有手有腳，**頭就是 bot 在 app 裡的頭像**（同樣的形狀、顏色和眼睛），衣服（T 恤、條紋衫、帽 T、吊帶褲、圍巾）依 bot 自動搭配。每個 bot 都有自己的獨立座位（不是一整排長桌），桌上插著寫了名字的小旗子；忙的坐在座位上打字，需要你回覆的會站到椅子上跳、揮手，座位周圍亮起黃色光圈（卡住的會抱頭發抖，亮起紅色「!」），點一下「Answer in Grok Bot」就跳回那個對話。執行 `node bin/office.mjs`，打開 http://127.0.0.1:4321/ 就好，資料只在你自己的電腦上讀取。
+把 Grok Bot 桌面版裡的 bot 變成 3D 辦公室裡的可愛 Q 版小人：大頭、小身體，有手有腳，**頭就是 bot 在 app 裡的頭像**（同樣的形狀、顏色和眼睛），衣服（T 恤、條紋衫、帽 T、吊帶褲、圍巾）依 bot 自動搭配。每個 bot 都有自己的獨立座位（不是一整排長桌，而是整齊的四人小島），桌上插著寫了名字的小旗子；忙的坐在座位上打字，需要你回覆的會站到椅子上跳、揮手，座位周圍亮起黃色光圈（卡住的會抱頭發抖，亮起紅色「!」），點一下「Answer in Grok Bot」就跳回那個對話。執行 `node bin/office.mjs`，打開 http://127.0.0.1:4321/ 就好，資料只在你自己的電腦上讀取。
 
 **誰在工作？** app 的本機快取只記錄訊息，不記錄中間的工具執行、瀏覽和子代理，所以 bot 回了「收到／正在處理」後安靜做事的那段時間，舊版會誤判成休息。現在只要符合下面任一條件就算工作中，bot 會留在座位上：有人（你或其他 bot）傳訊給它但它還沒回；它最後回的是「收到／正在處理／稍等」這類短訊息（最多 50 分鐘）；它把工作交給別的 bot，對方還沒回報；它找來幫忙的 bot 還在做；它 8 分鐘內有發言。想核對的話，執行 `GROKBOT_DEBUG=1 node bin/office.mjs`（終端機會列出每個 bot 的狀態和原因），或打開 http://127.0.0.1:4321/?debug 。時間長度可以用 `GROKBOT_GRACE_MIN`、`GROKBOT_TURN_MAX_MIN`、`GROKBOT_POLL_SEC` 調整。
 
@@ -136,7 +135,7 @@ Everything stays on your machine. The server only listens on 127.0.0.1, reads th
 - 🏃 **運動區**：跑步機、桌球、投籃、瑜珈墊
 - 🎮 **休閒區**：沙發上睡午覺、懶骨頭打電動、大型機台、手足球、聊天
 
-座位一個個分開擺放、方向各不相同，中間留走道。桌子有木桌、圓桌、L 型桌、站立桌、弧形桌、粉彩桌，椅子有辦公椅、高腳凳、瑜珈球、懶骨頭坐墊；每個座位依 bot 固定配上不同的裝飾：盆栽、仙人掌、檯燈、馬克杯、娃娃、小旗、相框、書、耳機、小電扇、魚缸、獎盃、甜甜圈，還有地毯和筆電貼紙。空位會擺上植物、書架或白板。低畫質時會省略裝飾以保持流暢。
+座位以**四人小島**整齊排列：兩張桌子並排、和對面兩張面對面，中間隔著矮盆栽，小島對齊排成格子，中間留出筆直的走道，下面鋪一整片地毯。所有座位用同一款淺木桌、深灰辦公椅、螢幕、鍵盤和白色檯燈（晚上會亮），看起來整齊又專業；有趣的地方留在小細節：椅背是 bot 的顏色，每張桌子同一個角落放**一樣**專屬小物（依 bot 固定）：盆栽、仙人掌、馬克杯、娃娃、相框、魚缸、獎盃、書、耳機或甜甜圈。沒人坐的小島位置會放矮書櫃和盆栽。低畫質時會省略小物以保持流暢。
 
 bot 閒置時會離開座位，**走路**（擺手邁步，不是瞬移）到這些區域找空位活動：躺在沙發上睡午覺、拿手把打電動、跑步機上跑步、揮桌球拍、投籃、做瑜珈、捧碗吃飯、喝咖啡、比手畫腳聊天、轉手足球桿，過一陣子會換到別的區域；一接到工作就走回自己的座位開始打字。頭上的小圖示會顯示它正在做什麼，點開 bot 卡片也會寫出來（例如「Playing ping-pong · Gym」）。
 

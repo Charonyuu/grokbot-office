@@ -11,49 +11,31 @@ const WALL_H = H - 0.5;
 const LIFT = 34; // how far a floor rises when the building is cut open below it
 const ZONE_W = 28; // width of the café / gym / lounge side of a floor
 const SPREAD_GAP = 14; // space between floors laid out side by side (the walls are tall)
-const PX = 4.8, PZ = 5.8; // desk grid pitch (each desk is nudged and turned off it)
+// Desks come in pods of four: two pairs facing each other across a low planter.
+const DESK_W = 2.0, DESK_D = 1.0, PAIR_X = 2.1; // a desk, and the pitch of the two side by side
+const SEAT_Z = 2.0; // from the pod's centre line to each chair
+const POD_X = 6.4, POD_Z = 8.6; // pod pitch: a narrow gap side to side, a clear aisle front to back
 
 // How big a floor has to be so every bot on its busiest team gets its own desk.
 export function floorPlan(n) {
   n = Math.max(1, n | 0);
   const desks = Math.max(6, n);
-  const cells = desks + Math.max(1, Math.round(desks * 0.12)); // a few cells stay free for plants and shelves
-  const rows = Math.max(3, Math.ceil(Math.sqrt(cells / 1.6)));
-  const cols = Math.max(2, Math.ceil(cells / rows));
-  const deskLen = cols * PX + 1.2;
+  const pods = Math.ceil(desks / 4);
+  const rows = Math.max(2, Math.ceil(Math.sqrt(pods / 1.4)));
+  const cols = Math.max(1, Math.ceil(pods / rows));
+  const deskLen = cols * POD_X;
   const W = 2.8 + deskLen + 3.4 + ZONE_W + 0.6;
-  const D = Math.max(22, rows * PZ + 5.5);
-  return { rows, cols, desks, deskLen, W, D, seats: desks, key: `${rows}x${cols}x${desks}` };
+  const D = Math.max(22, rows * POD_Z + 3);
+  return { rows, cols, pods, desks, deskLen, W, D, seats: pods * 4, key: `${rows}x${cols}x${pods}` };
 }
 
-const DESK_TYPES = ['wood', 'round', 'L', 'standing', 'curved', 'pastel'];
-const YAWS = [0, 0, 0.3, -0.3, Math.PI / 4, -Math.PI / 4, Math.PI / 2, -Math.PI / 2, 0.6, -0.6, Math.PI * 0.85, -Math.PI * 0.85];
+// one personal thing per bot, picked from its id, always in the same corner of the desk
+const ITEMS = ['plant', 'cactus', 'mug', 'plush', 'frame', 'fishbowl', 'trophy', 'books', 'headphones', 'donut'];
 
 function hashStr(s) {
   let h = 2166136261;
   for (const c of String(s)) h = Math.imul(h ^ c.charCodeAt(0), 16777619);
   return h >>> 0;
-}
-
-// a workstation's footprint on the floor: desk parts, the bot on its chair, and the
-// spot behind the chair it walks in from
-function footprint(type, x, z, yaw) {
-  const cs = Math.cos(yaw), sn = Math.sin(yaw);
-  const at = (lx, lz) => ({ x: x + lx * cs + lz * sn, z: z - lx * sn + lz * cs });
-  const parts = {
-    wood: [[0, 1.45, 1.15]],
-    round: [[0, 1.45, 0.95]],
-    L: [[0, 1.45, 1.05], [1.45, 0.95, 0.8]],
-    standing: [[0, 1.45, 1.05]],
-    curved: [[-0.99, 0.99, 0.62], [0, 1.4, 0.62], [0.99, 0.99, 0.62]],
-    pastel: [[0, 1.45, 1.1]],
-  }[type];
-  return {
-    type, x, z, yaw,
-    circles: parts.map(([lx, lz, r]) => ({ ...at(lx, lz), r })),
-    bot: { x, z, r: 1.1 },
-    approach: at(0, -2.15),
-  };
 }
 
 const mat = (color, o = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.8, ...o });
@@ -87,6 +69,8 @@ const M = {
   dark: mat(0x2c2f36, { roughness: 0.5 }),
   lift: mat(0x8d8d90, { roughness: 0.5 }),
   walnut: mat(0x9a6b45, { roughness: 0.6 }),
+  oak: mat(0xe8d3b0, { roughness: 0.6 }),
+  chair: mat(0x3b4048, { roughness: 0.55 }),
 };
 const PASTEL = { mint: 0xbfeadb, pink: 0xffd1e0, lavender: 0xd9ccff, butter: 0xfff0b3, sky: 0xcfe6ff, peach: 0xffd8bf };
 const DECOR_COLORS = [PASTEL.mint, PASTEL.pink, PASTEL.lavender, PASTEL.butter, PASTEL.sky, PASTEL.peach, 0xffe0f0, 0xd6f5e3];
@@ -574,255 +558,123 @@ export class Floor {
 
   // ---------- desks: a standalone workstation for every bot ----------
 
-  // Workstations sit on a loose, staggered grid; each one gets its own shape, colour,
-  // chair, angle and nudge (all seeded, so a floor looks the same on every reload),
-  // tried until it keeps a walking gap to its neighbours. A few cells are left for
-  // plants, a bookshelf or a whiteboard so the room doesn't read as a grid.
+  // Pods of four separate desks on a straight grid: two desks side by side, facing two
+  // more across a low planter. Pods fill from the corridor side; a slot left over gets
+  // a tidy bookshelf with plants. Every desk, chair and screen is the same model.
   desks() {
-    const { rows, cols, desks } = this.plan;
-    const r0 = rng(rows * 131 + cols * 17 + desks * 7);
-    const cells = [];
+    const { rows, cols, pods } = this.plan;
+    const seats = [];
+    const carpet = C(0xe9edf3, { roughness: 0.95 }), trim = C(0xc9d2de, { roughness: 0.9 });
+    const cx = (this.x0 + this.deskRight) / 2, cw = this.plan.deskLen + 0.6, cd = rows * POD_Z - 0.6;
+    this.inner.add(box(cw, 0.02, cd, carpet, cx, 0.01, 0));
+    for (const e of [-1, 1]) this.inner.add(box(cw, 0.022, 0.12, trim, cx, 0.011, e * (cd / 2 - 0.06)));
+    let k = 0;
     for (let c = 0; c < cols; c++) {
-      for (let r = rows - 1; r >= 0; r--) {
-        const x = this.deskRight - 0.6 - PX / 2 - c * PX;
-        const z = (r - (rows - 1) / 2) * PZ + (c % 2 ? PZ / 4 : -PZ / 4);
-        cells.push({ x, z });
+      const x = this.deskRight - POD_X / 2 - c * POD_X;
+      for (let r = 0; r < rows; r++) {
+        const z = (r - (rows - 1) / 2) * POD_Z;
+        if (k++ >= pods) { this.shelfNook(x, z); continue; }
+        this.pod(x, z);
+        for (const [dx, sz, yaw] of [[-1, -1, 0], [1, -1, 0], [-1, 1, Math.PI], [1, 1, Math.PI]]) {
+          // the name flag and lamp on the pod's outer side, the personal thing on the inner one
+          const out = yaw ? -dx : dx;
+          seats.push(this.station(x + dx * PAIR_X / 2, z + sz * SEAT_Z, yaw, out, seats.length));
+        }
       }
     }
-    const spare = new Set();
-    while (spare.size < cells.length - desks) spare.add(1 + Math.floor(r0() * (cells.length - 1)));
-    const placed = [];
-    const seats = [];
-    let ti = Math.floor(r0() * DESK_TYPES.length);
-    cells.forEach((cell, i) => {
-      if (spare.has(i)) { placed.push(this.nook(cell, r0)); return; }
-      const type = DESK_TYPES[(ti += 1 + (r0() < 0.3 ? 1 : 0)) % DESK_TYPES.length];
-      let st = null, best = null, bestBad = Infinity;
-      for (let tries = 0; tries < 24 && !st; tries++) {
-        const last = tries === 23;
-        const yaw = tries < 20 ? YAWS[Math.floor(r0() * YAWS.length)] : 0;
-        const jx = tries < 20 ? (r0() - 0.5) * 1.0 : 0, jz = tries < 20 ? (r0() - 0.5) * 1.0 : 0;
-        const cand = footprint(type, cell.x + jx, cell.z + jz, yaw);
-        const bad = this.clash(cand, placed);
-        if (bad < bestBad) { best = cand; bestBad = bad; }
-        if (!bad) st = cand;
-        else if (last) st = best;
-      }
-      placed.push(st);
-      seats.push(this.station(st, i));
-    });
     return seats;
   }
 
-  // how badly a candidate workstation crowds the ones already placed (0 = fine)
-  clash(s, placed) {
-    const { W, D } = this;
-    const d = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
-    let bad = 0;
-    const over = (gap) => { if (gap < 0) bad += -gap; };
-    for (const c of [...s.circles, s.bot]) {
-      over(c.x - c.r - (-W / 2 + 1.3));
-      over(this.deskRight + 0.5 - (c.x + c.r));
-      over(D / 2 - 0.9 - (Math.abs(c.z) + c.r));
-    }
-    over(D / 2 - 1.3 - Math.abs(s.approach.z));
-    over(this.deskRight + 1.2 - s.approach.x);
-    over(s.approach.x - (-W / 2 + 1.4));
-    for (const p of placed) {
-      for (const a of s.circles) for (const b of p.circles) over(d(a, b) - a.r - b.r - 1.75);
-      for (const a of s.circles) {
-        if (p.bot) over(d(a, p.bot) - a.r - p.bot.r - 0.4);
-        if (p.approach) over(d(a, p.approach) - a.r - 1.05);
-      }
-      for (const b of p.circles) {
-        over(d(s.bot, b) - s.bot.r - b.r - 0.4);
-        over(d(s.approach, b) - b.r - 1.05);
-      }
-      if (p.bot) { over(d(s.bot, p.bot) - 2.7); over(d(s.approach, p.bot) - 1.7); over(d(p.approach, s.bot) - 1.7); }
-    }
-    return bad;
+  // the planter down the middle of a pod, and the pod's footprint for walkers
+  pod(x, z) {
+    const g = this.inner;
+    const len = PAIR_X * 2 - 0.3, h = 1.45;
+    g.add(box(len, 0.3, 0.3, M.white, x, h + 0.2, z, 0.04));
+    for (let i = 0; i < 7; i++) g.add(ball(0.17 + (i % 2) * 0.04, M.leaves[i % 3], x - len / 2 + 0.3 + (i * (len - 0.6)) / 6, h + 0.42, z, 10));
+    this.solid(x, z, PAIR_X * 2, (SEAT_Z - 1.45 + DESK_D / 2) * 2);
   }
 
-  // A cell without a desk: plants, a bookshelf or a whiteboard.
-  nook(cell, r0) {
+  // a pod slot with nobody to seat: a low bookshelf between two planters, squared up
+  shelfNook(x, z) {
     const g = this.inner;
-    const kind = ['plants', 'shelf', 'board', 'plants'][Math.floor(r0() * 4)];
-    const x = cell.x + (r0() - 0.5) * 0.8, z = cell.z + (r0() - 0.5) * 0.8;
+    g.add(box(3.0, 1.1, 0.6, M.white, x, 0.55, z, 0.04));
+    for (let b = 0; b < 2; b++) {
+      g.add(box(2.8, 0.04, 0.5, M.wood, x, 0.35 + b * 0.5, z + 0.04));
+      for (let i = 0; i < 9; i++) g.add(box(0.16, 0.34, 0.4, C(DECOR_COLORS[(b * 9 + i) % DECOR_COLORS.length], { roughness: 0.6 }), x - 1.2 + i * 0.3, 0.37 + b * 0.5 + 0.17, z + 0.05));
+    }
+    for (const e of [-1, 1]) g.add(plant(x + e * 2.2, z, 0.8));
+    this.solid(x, z, 3.0, 0.6);
+    for (const e of [-1, 1]) this.round(x + e * 2.2, z, 0.35);
+  }
+
+  // One workstation: desk, chair, monitor, keyboard and lamp, all in the desk's own
+  // frame (the bot sits at the origin facing +z, the desk in front of it). `out` is
+  // which side (-1/1, desk frame) the name flag goes on.
+  station(x, z, yaw, out, i) {
     const grp = new THREE.Group();
     grp.position.set(x, 0, z);
-    grp.rotation.y = (r0() - 0.5) * 1.4;
-    g.add(grp);
-    if (kind === 'plants') {
-      for (let k = 0; k < 3; k++) {
-        const a = (k / 3) * Math.PI * 2 + r0();
-        grp.add(plant(Math.cos(a) * 0.75, Math.sin(a) * 0.75, 0.65 + r0() * 0.35));
-      }
-    } else if (kind === 'shelf') {
-      grp.add(box(2.2, 1.9, 0.6, M.wood, 0, 0.95, 0, 0.04));
-      for (let s = 0; s < 3; s++) {
-        grp.add(box(2.0, 0.05, 0.5, M.white, 0, 0.35 + s * 0.55, 0.06));
-        for (let b = 0; b < 7; b++) {
-          const hb = 0.3 + r0() * 0.15;
-          grp.add(box(0.18, hb, 0.4, C(DECOR_COLORS[(s * 7 + b) % DECOR_COLORS.length], { roughness: 0.6 }), -0.8 + b * 0.25, 0.38 + s * 0.55 + hb / 2, 0.08));
-        }
-      }
-      grp.add(plant(0.7, 0, 0.4).translateY(1.9));
-    } else {
-      grp.add(box(2.3, 1.4, 0.08, M.white, 0, 2.0, 0, 0.03));
-      grp.add(box(2.4, 0.08, 0.14, M.steel, 0, 1.28, 0.04));
-      for (const ex of [-1, 1]) {
-        grp.add(box(0.07, 2.7, 0.07, M.steel, ex * 1.1, 1.35, 0));
-        grp.add(box(0.07, 0.07, 0.9, M.steel, ex * 1.1, 0.06, 0));
-      }
-      // doodles: a little bar chart and some sticky notes
-      [G.blue, G.red, G.yellow, G.green].forEach((c, k) => grp.add(box(0.16, 0.2 + k * 0.15, 0.02, C(c, { roughness: 0.6 }), -0.8 + k * 0.25, 1.45 + (0.2 + k * 0.15) / 2, 0.05)));
-      [G.yellow, G.pink, PASTEL.mint, PASTEL.sky].forEach((c, k) => grp.add(box(0.26, 0.26, 0.02, C(c, { roughness: 0.7 }), 0.3 + (k % 2) * 0.35, 2.35 - Math.floor(k / 2) * 0.35, 0.05)));
-    }
-    const circle = { x, z, r: 1.15 };
-    this.round(x, z, 1.05);
-    return { circles: [circle], bot: null, approach: null };
-  }
-
-  // One workstation: desk, chair, laptop or monitor, all in the desk's own frame
-  // (the bot sits at the origin facing +z, the desk in front of it).
-  station(st, i) {
-    const r = rng(i * 977 + 31);
-    const pick = (a) => a[Math.floor(r() * a.length)];
-    const grp = new THREE.Group();
-    grp.position.set(st.x, 0, st.z);
-    grp.rotation.y = st.yaw;
+    grp.rotation.y = yaw;
     this.inner.add(grp);
-    const type = st.type;
-    const h = type === 'standing' ? 1.3 : 1.45; // the standing desk is at a chibi's chest height
-    const legs = (w, d, y0, material, inset = 0.12) => {
-      for (const ex of [-1, 1]) for (const ez of [-1, 1]) grp.add(box(0.07, y0, 0.07, material, ex * (w / 2 - inset), y0 / 2, 1.45 + ez * (d / 2 - inset)));
-    };
-    let slots, flag;
-    if (type === 'wood') {
-      const top = pick([M.wood, M.walnut]);
-      grp.add(box(2.0, 0.1, 1.0, top, 0, h, 1.45, 0.03));
-      // trestle legs
-      for (const ex of [-1, 1]) {
-        grp.add(box(0.08, h - 0.05, 0.08, M.dark, ex * 0.82, (h - 0.05) / 2, 1.45));
-        grp.add(box(0.08, 0.08, 0.85, M.dark, ex * 0.82, 0.04, 1.45));
-      }
-      grp.add(box(1.64, 0.06, 0.06, M.dark, 0, 0.5, 1.45));
-      slots = [[-0.75, 1.2], [0.75, 1.2], [0.72, 1.75]];
-      flag = [-0.72, 1.82];
-    } else if (type === 'round') {
-      grp.add(cyl(0.9, 0.9, 0.08, pick([M.white, C(PASTEL.mint, { roughness: 0.6 }), C(PASTEL.pink, { roughness: 0.6 })]), 0, h, 1.45, 32));
-      grp.add(cyl(0.07, 0.09, h, M.dark, 0, h / 2, 1.45, 10));
-      grp.add(cyl(0.45, 0.5, 0.05, M.dark, 0, 0.03, 1.45, 20));
-      slots = [[-0.62, 1.2], [0.62, 1.2], [0.5, 1.92]];
-      flag = [-0.5, 1.95];
-    } else if (type === 'L') {
-      const top = pick([M.white, M.wood]);
-      const leg = C(pick([G.blue, G.red, G.green, G.yellow]), { roughness: 0.5 });
-      grp.add(box(2.0, 0.1, 1.0, top, 0, h, 1.45, 0.03));
-      grp.add(box(0.9, 0.1, 1.5, top, 1.45, h, 0.95, 0.03));
-      grp.add(box(0.06, h - 0.05, 0.9, leg, -0.95, (h - 0.05) / 2, 1.45));
-      grp.add(box(0.85, h - 0.05, 0.06, leg, 1.45, (h - 0.05) / 2, 0.22));
-      grp.add(box(0.06, h - 0.05, 0.06, leg, 1.0, (h - 0.05) / 2, 1.92));
-      slots = [[-0.75, 1.2], [1.45, 0.55], [1.45, 1.25]];
-      flag = [-0.72, 1.82];
-    } else if (type === 'standing') {
-      const top = pick([M.white, M.walnut, C(PASTEL.sky, { roughness: 0.6 })]);
-      grp.add(box(1.8, 0.08, 0.85, top, 0, h, 1.45, 0.03));
-      for (const ex of [-1, 1]) {
-        grp.add(box(0.12, h - 0.05, 0.12, M.steel, ex * 0.7, (h - 0.05) / 2, 1.45));
-        grp.add(box(0.1, 0.06, 0.8, M.steel, ex * 0.7, 0.03, 1.45));
-      }
-      grp.add(box(1.4, 0.05, 0.05, M.steel, 0, h - 0.25, 1.45));
-      // anti-fatigue mat to stand on
-      grp.add(box(1.3, 0.04, 0.9, C(pick([G.green, G.purple, G.teal]), { roughness: 0.9 }), 0, 0.02, 0, 0.02));
-      slots = [[-0.65, 1.22], [0.65, 1.22], [0.62, 1.7]];
-      flag = [-0.62, 1.72];
-    } else if (type === 'curved') {
-      const s = new THREE.Shape();
-      const a0 = Math.PI / 2 - 1.25, a1 = Math.PI / 2 + 1.25;
-      s.absarc(0, 0, 1.85, a0, a1, false);
-      s.absarc(0, 0, 0.95, a1, a0, true);
-      const geo = new THREE.ExtrudeGeometry(s, { depth: 0.1, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 2, curveSegments: 24 });
-      geo.rotateX(Math.PI / 2);
-      const top = shade(new THREE.Mesh(geo, C(pick([PASTEL.lavender, PASTEL.butter, PASTEL.peach]), { roughness: 0.6 })));
-      top.position.y = h + 0.05;
-      grp.add(top);
-      for (const a of [-0.95, 0, 0.95]) grp.add(cyl(0.05, 0.05, h, M.white, Math.sin(a) * 1.4, h / 2, Math.cos(a) * 1.4, 8));
-      slots = [[-1.16, 0.81], [1.16, 0.81], [0.7, 1.28]];
-      flag = [-0.72, 1.22];
-    } else {
-      grp.add(box(1.8, 0.12, 0.95, C(pick([PASTEL.mint, PASTEL.pink, PASTEL.butter, PASTEL.sky, PASTEL.lavender]), { roughness: 0.55 }), 0, h, 1.45, 0.05));
-      legs(1.8, 0.95, h - 0.06, M.dark, 0.15);
-      slots = [[-0.68, 1.2], [0.68, 1.2], [0.66, 1.75]];
-      flag = [-0.66, 1.78];
+    const h = 1.45, dz = 1.45;
+    // light-oak top on white panel legs, with a modesty panel at the back
+    grp.add(box(DESK_W, 0.08, DESK_D, M.oak, 0, h, dz, 0.03));
+    for (const ex of [-1, 1]) grp.add(box(0.06, h - 0.04, DESK_D - 0.1, M.white, ex * (DESK_W / 2 - 0.08), (h - 0.04) / 2, dz));
+    grp.add(box(DESK_W - 0.2, 0.6, 0.04, M.white, 0, h - 0.4, dz + DESK_D / 2 - 0.08));
+    // the chair: charcoal seat and back on a five-star base
+    grp.add(cyl(0.46, 0.46, 0.12, M.chair, 0, 0.82, 0, 18));
+    grp.add(cyl(0.05, 0.05, 0.7, M.steel, 0, 0.42, 0, 8));
+    for (let k = 0; k < 5; k++) {
+      const a = (k / 5) * Math.PI * 2;
+      const leg = box(0.5, 0.05, 0.07, M.dark, Math.cos(a) * 0.25, 0.06, Math.sin(a) * 0.25);
+      leg.rotation.y = -a;
+      grp.add(leg);
     }
-    // the chair
-    let seatY = 0;
-    if (type !== 'standing') {
-      const style = pick(['stool', 'office', 'ball', 'pouf']);
-      const col = C(pick([G.blue, G.red, G.yellow, G.green, G.purple, G.teal, G.orange, G.pink]), { roughness: 0.5 });
-      if (style === 'stool') { grp.add(cyl(0.42, 0.42, 0.9, col, 0, 0.45, 0, 18)); seatY = 0.9; }
-      else if (style === 'ball') { grp.add(ball(0.47, col, 0, 0.47, 0, 18)); seatY = 0.92; }
-      else if (style === 'pouf') { grp.add(cyl(0.46, 0.5, 0.85, col, 0, 0.43, 0, 18)); grp.add(cyl(0.44, 0.44, 0.04, M.white, 0, 0.86, 0, 18)); seatY = 0.88; }
-      else {
-        grp.add(cyl(0.46, 0.46, 0.12, col, 0, 0.82, 0, 18));
-        grp.add(cyl(0.05, 0.05, 0.7, M.steel, 0, 0.42, 0, 8));
-        for (let k = 0; k < 5; k++) {
-          const a = (k / 5) * Math.PI * 2;
-          const leg = box(0.5, 0.05, 0.07, M.dark, Math.cos(a) * 0.25, 0.06, Math.sin(a) * 0.25);
-          leg.rotation.y = -a;
-          grp.add(leg);
-        }
-        grp.add(box(0.85, 0.75, 0.1, col, 0, 1.35, -0.62, 0.05));
-        seatY = 0.9;
-      }
-    }
-    // laptop or monitor; the screen lights up while its bot works
+    grp.add(box(0.85, 0.75, 0.1, M.chair, 0, 1.35, -0.62, 0.05));
+    // monitor and keyboard; the screen lights up while its bot works
     const display = new THREE.Mesh(new THREE.PlaneGeometry(0.76, 0.48), new THREE.MeshStandardMaterial({ color: 0x1d1d20, roughness: 0.3, emissive: 0x000000 }));
     display.userData.keep = true;
     display.rotation.y = Math.PI;
+    display.scale.set(1.2, 1.1, 1);
+    display.position.set(0, 0.29, -0.01);
+    grp.add(box(0.36, 0.03, 0.26, M.dark, 0, h + 0.06, 1.72));
+    grp.add(box(0.06, 0.45, 0.06, M.dark, 0, h + 0.27, 1.77));
     const screen = new THREE.Group();
-    if (type === 'curved' || (type !== 'standing' && r() < 0.35)) {
-      grp.add(box(0.36, 0.03, 0.26, M.dark, 0, h + 0.07, 1.75));
-      grp.add(box(0.06, 0.45, 0.06, M.dark, 0, h + 0.28, 1.8));
-      screen.position.set(0, h + 0.38, 1.78);
-      screen.add(box(1.0, 0.62, 0.05, M.dark, 0, 0.29, 0.02, 0.02));
-      grp.add(box(0.7, 0.02, 0.22, M.white, 0, h + 0.06, 1.12)); // keyboard
-      display.scale.set(1.2, 1.1, 1);
-      display.position.set(0, 0.29, -0.01);
-    } else {
-      grp.add(box(0.85, 0.04, 0.58, M.laptop, 0, h + 0.07, 1.3));
-      screen.position.set(0, h + 0.07, 1.58);
-      screen.rotation.x = 0.28;
-      screen.add(box(0.85, 0.58, 0.03, M.laptop, 0, 0.29, 0));
-      display.position.set(0, 0.29, -0.02);
-    }
+    screen.position.set(0, h + 0.38, 1.75);
+    screen.add(box(1.0, 0.62, 0.05, M.dark, 0, 0.29, 0.02, 0.02));
     screen.add(display);
     grp.add(screen);
+    grp.add(box(0.7, 0.02, 0.22, M.white, 0, h + 0.05, 1.12));
+    grp.add(box(0.1, 0.03, 0.15, M.white, -out * 0.55, h + 0.055, 1.14, 0.015));
+    // the same white lamp on every desk (it glows at night)
+    const lamp = new THREE.Group();
+    lamp.position.set(out * 0.8, h + 0.04, 1.72);
+    lamp.rotation.y = out > 0 ? 0 : Math.PI;
+    for (const [geo, material] of DECOR.lamp(null, () => 0.9)) lamp.add(shade(new THREE.Mesh(geo, material)));
+    grp.add(lamp);
 
-    // obstacles for walkers: the desk and the chair
-    for (const c of st.circles) this.round(c.x, c.z, Math.max(0.5, c.r - 0.15));
-    this.round(st.x, st.z, type === 'standing' ? 0.35 : 0.45);
+    // obstacle for walkers: the chair (the pod's desks are one block, see pod())
+    this.round(x, z, 0.45);
 
     this.inner.updateMatrixWorld(true);
     const inv = this.inner.matrixWorld.clone().invert();
     const frame = new THREE.Matrix4().multiplyMatrices(inv, grp.matrixWorld);
-    const lid = new THREE.Matrix4().multiplyMatrices(inv, screen.matrixWorld);
-    const at = (x, y, z) => V(x, y, z).applyMatrix4(frame);
+    const at = (lx, y, lz) => V(lx, y, lz).applyMatrix4(frame);
+    const approach = at(0, 0, -2.15);
+    const flag = [out * 0.9, 1.08];
     return {
-      pos: V(st.x, seatY, st.z),
-      face: st.yaw,
-      approach: V(st.approach.x, 0, st.approach.z),
+      pos: V(x, 0.9, z),
+      face: yaw,
+      approach: V(approach.x, 0, approach.z),
       display,
-      type,
+      type: 'desk',
       h,
       // where the hands go to type: the desk's near edge, by the keyboard
-      reach: { y: h + 0.06, z: { round: 0.6, standing: 1.02, curved: 0.93, pastel: 0.97 }[type] ?? 0.95 },
+      reach: { y: h + 0.06, z: 0.95 },
       frame,
-      lid,
-      slots,
+      item: [-out * 0.72, 1.62],
       plate: at(flag[0], h + 1.42, flag[1]),
       pole: at(flag[0], h + 0.66, flag[1]),
+      i,
     };
   }
 
@@ -895,34 +747,10 @@ export class Floor {
       const h = hashStr(who.id || who.name);
       const r = rng(h);
       const mine = C(parseInt(String(who.color).replace('#', '').slice(0, 6), 16) || 0x777777, { roughness: 0.45 });
-      // three things on the desk, all different
-      const bag = Object.keys(DECOR);
-      for (let k = 0; k < s.slots.length; k++) {
-        const name = bag.splice(Math.floor(r() * bag.length), 1)[0];
-        const [sx, sz] = s.slots[k];
-        const m4 = s.frame.clone().multiply(T(sx, s.h + 0.05, sz, (r() - 0.5) * 1.2));
-        for (const [geo, material] of DECOR[name](mine, r)) put(geo, material, m4);
-      }
-      // a rug under most desks
-      if (r() < 0.8) {
-        const rugC = C(DECOR_COLORS[Math.floor(r() * DECOR_COLORS.length)], { roughness: 0.95 });
-        const edge = C(PRIMARY[Math.floor(r() * 4)], { roughness: 0.9 });
-        if (r() < 0.6) {
-          put(new THREE.CircleGeometry(1.6, 32).rotateX(-Math.PI / 2), rugC, s.frame.clone().multiply(T(0, 0.012 + (i % 3) * 0.002, 0.75)));
-          put(new THREE.RingGeometry(1.46, 1.6, 32).rotateX(-Math.PI / 2), edge, s.frame.clone().multiply(T(0, 0.019 + (i % 3) * 0.002, 0.75)));
-        } else {
-          put(new THREE.PlaneGeometry(2.8, 2.8).rotateX(-Math.PI / 2), rugC, s.frame.clone().multiply(T(0, 0.012 + (i % 3) * 0.002, 0.75)));
-          for (const dz of [-1.1, 1.1]) put(new THREE.PlaneGeometry(2.8, 0.14).rotateX(-Math.PI / 2), edge, s.frame.clone().multiply(T(0, 0.019 + (i % 3) * 0.002, 0.75 + dz)));
-        }
-      }
-      // stickers on the back of the laptop lid or monitor
-      if (r() < 0.65) {
-        const n = 2 + Math.floor(r() * 3);
-        for (let k = 0; k < n; k++) {
-          const st = r() < 0.3 ? new THREE.BoxGeometry(0.11, 0.11, 0.006) : new THREE.CylinderGeometry(0.06, 0.06, 0.006, 12).rotateX(Math.PI / 2);
-          put(st, k === 0 ? mine : C(PRIMARY[Math.floor(r() * 4)], { roughness: 0.5 }), s.lid.clone().multiply(T(-0.28 + r() * 0.56, 0.12 + r() * 0.34, 0.035)));
-        }
-      }
+      // one personal thing, and the chair's back in the bot's colour
+      const [ix, iz] = s.item;
+      for (const [geo, material] of DECOR[ITEMS[h % ITEMS.length]](mine, r)) put(geo, material, s.frame.clone().multiply(T(ix, s.h + 0.05, iz, 0.4)));
+      put(new THREE.BoxGeometry(0.75, 0.6, 0.03), mine, s.frame.clone().multiply(T(0, 1.35, -0.69)));
     });
     // plain-coloured bits share one vertex-coloured mesh; glass, gold and lights keep theirs
     const plain = [];
