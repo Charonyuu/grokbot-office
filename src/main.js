@@ -48,6 +48,7 @@ controls.maxPolarAngle = 1.25;
 const building = new Building(scene);
 const botLayer = new BotLayer(building);
 botLayer.wanders = !new URLSearchParams(location.search).has('still');
+if (new URLSearchParams(location.search).has('debug')) import('./debug.js').then((m) => m.startDebug());
 
 let halfH = 15;
 // Zoom that fits a w x d footprint (h tall) in the window, seen from the camera's corner.

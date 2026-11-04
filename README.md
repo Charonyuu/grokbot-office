@@ -36,14 +36,30 @@ Open http://127.0.0.1:4321/. Your bots appear on their own.
 
 `bin/office.mjs` reads the local cache the Grok Bot app keeps in `~/Library/Application Support/Grok Bot/` (roster, recent conversations, weekly usage) and pushes changes to the page. Point it elsewhere with `GROKBOT_DIR=...`, or change the port with `PORT=...`.
 
+### Is the office right about who's working?
+
+The app's cache records messages, not the work in between: no tool calls, no browsing, no subagents. A bot that says "On it" and then works for twenty minutes leaves a transcript that has gone quiet. `bin/status.mjs` reads that quiet stretch as work, using the rules in the table below. To check them against the app:
+
+```bash
+GROKBOT_DEBUG=1 node bin/office.mjs     # prints every bot's state and why, then each change as it happens
+```
+
+Or open http://127.0.0.1:4321/?debug for a panel with the same list, or http://127.0.0.1:4321/api/debug for the JSON. Three settings let you tune the rules:
+
+- `GROKBOT_GRACE_MIN` (default 8): how long a bot still counts as working after its last message.
+- `GROKBOT_TURN_MAX_MIN` (default 50): the longest an unanswered message, an "on it", or a hand-off to another bot keeps it working.
+- `GROKBOT_POLL_SEC` (default 5): how often the cache is re-read, on top of watching it for changes.
+
+`node dev/fake-cache.mjs /tmp/fake --check` runs the rules on a made-up cache with one bot per case. Point the server at that cache with `GROKBOT_DIR=/tmp/fake` to see the same bots in the office.
+
 ## What you see
 
 | The bot is... | Because |
 |---|---|
 | away from its desk in the café, gym or lounge | nothing to do: its last reply is done (it's on a break) |
-| sitting at its desk, laptop lit, typing | you asked something and it hasn't replied yet, or it just replied |
+| sitting at its desk, laptop lit, typing | it's working: you (or another bot) asked something and it hasn't answered yet, it said "on it" and is still going, it handed work to another bot that hasn't reported back, or it said something in the last 8 minutes |
 | standing on its chair, bouncing and waving, yellow "?", yellow ring pulsing round the desk | it is waiting on you: a choice card, a permission ask, a form, an email draft to approve, or a question |
-| shaking at its desk, hands on its head, with a red "!" and a red ring | it is stuck |
+| shaking at its desk, hands on its head, with a red "!" and a red ring | it is stuck: its last task was stopped (for example the app's 50-minute limit for background tasks) |
 | spinning and cheering with its arms up | it just finished something |
 
 ### Desks and break zones
@@ -102,6 +118,7 @@ Everything stays on your machine. The server only listens on 127.0.0.1, reads th
 ## Known limits
 
 - The Grok Bot app writes its local cache from time to time, not on every message, so the office can lag behind what you see in the app.
+- The cache has no "running" flag, so "working" is a best guess from the messages (see above). A bot that finishes silently right after saying "on it" stays at its desk until `GROKBOT_TURN_MAX_MIN` runs out. One that works for a long time without saying "on it" goes on a break after `GROKBOT_GRACE_MIN`.
 - The cache has no per-bot token counts, so "most active" counts replies; the plan's weekly usage is the app's own figure.
 - All floors are the same size, sized for your busiest team, so smaller teams have some free desks.
 - Break spots are shared first come, first served; when a floor has more bots on a break than spots, the extras stand and chat in open space.
@@ -109,6 +126,8 @@ Everything stays on your machine. The server only listens on 127.0.0.1, reads th
 ## 中文說明
 
 把 Grok Bot 桌面版裡的 bot 變成 3D 辦公室裡的可愛 Q 版小人：大頭、小身體，有手有腳，**頭就是 bot 在 app 裡的頭像**（同樣的形狀、顏色和眼睛），衣服（T 恤、條紋衫、帽 T、吊帶褲、圍巾）依 bot 自動搭配。每個 bot 都有自己的獨立座位（不是一整排長桌），桌上插著寫了名字的小旗子；忙的坐在座位上打字，需要你回覆的會站到椅子上跳、揮手，座位周圍亮起黃色光圈（卡住的會抱頭發抖，亮起紅色「!」），點一下「Answer in Grok Bot」就跳回那個對話。執行 `node bin/office.mjs`，打開 http://127.0.0.1:4321/ 就好，資料只在你自己的電腦上讀取。
+
+**誰在工作？** app 的本機快取只記錄訊息，不記錄中間的工具執行、瀏覽和子代理，所以 bot 回了「收到／正在處理」後安靜做事的那段時間，舊版會誤判成休息。現在只要符合下面任一條件就算工作中，bot 會留在座位上：有人（你或其他 bot）傳訊給它但它還沒回；它最後回的是「收到／正在處理／稍等」這類短訊息（最多 50 分鐘）；它把工作交給別的 bot，對方還沒回報；它找來幫忙的 bot 還在做；它 8 分鐘內有發言。想核對的話，執行 `GROKBOT_DEBUG=1 node bin/office.mjs`（終端機會列出每個 bot 的狀態和原因），或打開 http://127.0.0.1:4321/?debug 。時間長度可以用 `GROKBOT_GRACE_MIN`、`GROKBOT_TURN_MAX_MIN`、`GROKBOT_POLL_SEC` 調整。
 
 辦公室參考 Google 辦公室的配置，除了座位區，每層樓還有：
 
