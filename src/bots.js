@@ -10,6 +10,14 @@ import { Chibi, HIPS, NECK, HEAD, vec, mirror } from './chibi.js';
 
 const SCALE = 1.3;
 const SPEED = 3.6;
+const cardGeo = new THREE.PlaneGeometry(0.55, 0.4);
+const cardCanvas = document.createElement('canvas');
+cardCanvas.width = 128; cardCanvas.height = 96;
+const cardCtx = cardCanvas.getContext('2d');
+cardCtx.fillStyle = '#fff4c8'; cardCtx.fillRect(0, 0, 128, 96);
+cardCtx.fillStyle = '#39434a';
+for (const [y, width] of [[20, 84], [35, 65], [50, 90], [65, 72]]) cardCtx.fillRect(14, y, width, 4);
+const cardMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cardCanvas), side: THREE.DoubleSide });
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 function roundedShape(pts, r) {
@@ -193,6 +201,7 @@ export class Bot {
   dispose() {
     this.root.removeFromParent();
     this.el.remove();
+    this.errandCard?.removeFromParent();
     this.moodEl?.remove();
     this.mat.dispose();
     this.limbs.geometry.dispose();
@@ -548,6 +557,15 @@ export class BotLayer {
     for (const [team, recs] of byTeam) {
       const floor = this.building.floor(team);
       if (!floor) continue;
+      floor.setCodexBoard({ ...state.codex, top: (state.codex?.top || []).map((x) => ({ ...x, color: state.bots.get(x.bot)?.color })) });
+      if (!floor.codexBot) {
+        const c = floor.codexBot = new Bot({ id: 'codex-contractor', name: 'Codex', shape: 'cube', color: '#171d24' }, this.gloss);
+        floor.inner.add(c.root); c.root.position.copy(floor.codexSeat.pos); c.root.rotation.y = floor.codexSeat.face;
+        c.label.visible = true; c.el.classList.add('named'); c.el.firstChild.textContent = '⌨';
+        const band = new THREE.Mesh(new THREE.TorusGeometry(0.68, 0.045, 6, 24, Math.PI), new THREE.MeshStandardMaterial({ color: 0x37d9d0 }));
+        band.position.y = 0.75; c.chibi.head.add(band);
+        for (const side of [-1, 1]) { const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.13, 12), band.material); cup.rotation.z = Math.PI / 2; cup.position.set(side * 0.66, 0.75, 0); c.chibi.head.add(cup); }
+      }
       const plates = [];
       recs.forEach((rec, i) => {
         let bot = this.bots.get(rec.id);
@@ -579,6 +597,14 @@ export class BotLayer {
           bot.seenDone = rec.doneAt;
           if (!instant && bot.placed === true) { bot.celebrate = 1.1; bot.doneShow = 2.2; this.burst(bot); }
         }
+        const cs = rec.codex?.state || null;
+        if (cs !== bot.codexSeen) {
+          if (cs && !instant && bot.placed === true && rec.state !== 'waiting' && rec.state !== 'error') {
+            bot.errand = cs === 'done' ? 'pickup' : 'deliver'; bot.errandWait = 0; bot.key = '';
+          }
+          bot.codexSeen = cs;
+        }
+        if (rec.state === 'waiting' || rec.state === 'error') bot.errand = null;
         this.retarget(bot, instant);
       });
       floor.setPlates(plates);
@@ -604,7 +630,12 @@ export class BotLayer {
   retarget(bot, instant) {
     const s = bot.rec.state, seat = bot.seat, f = bot.floor;
     let to, face, key, approach;
-    if (s === 'resting') {
+    if (bot.errand === 'deliver' || bot.errand === 'pickup') {
+      if (bot.spot != null) { f.releaseRest(bot.id); bot.spot = null; }
+      const others = [...this.bots.values()].filter((b) => b !== bot && b.floor === f && (b.errand === 'deliver' || b.errand === 'pickup'));
+      const slot = others.filter((b) => b.id < bot.id).length % 3;
+      to = f.codexSpot.pos.clone().add(V(0, 0, slot * 1.1)); face = f.codexSpot.face; key = 'codex'; approach = null;
+    } else if (s === 'resting' && !bot.errand) {
       if (bot.spot == null || f.rest[bot.spot]?.taken !== bot.id) bot.spot = f.claimRest(bot.id, bot.lastZone);
       const sp = f.rest[bot.spot];
       to = sp.pos; face = sp.face; key = `rest${bot.spot}`; approach = sp.approach;
@@ -679,11 +710,36 @@ export class BotLayer {
       floors.add(bot.floor);
       const f = bot.floor;
       const s = bot.rec.state;
+      if (bot.errand && !bot.path.length) {
+        if (bot.key === 'codex') {
+          bot.errandWait += dt;
+          if (bot.errandWait >= 1.5) { bot.errand = bot.errand === 'pickup' ? 'return-done' : 'return'; bot.key = ''; this.retarget(bot, false); }
+        } else if (bot.key === 'seat') {
+          if (bot.errand === 'return-done') { bot.doneShow = 1.5; this.burst(bot); }
+          bot.errand = null; bot.key = ''; this.retarget(bot, false);
+        }
+      }
+      if (bot.errand && !bot.errandCard) { bot.errandCard = new THREE.Mesh(cardGeo, cardMat); f.inner.add(bot.errandCard); }
+      if (bot.errandCard) {
+        bot.errandCard.visible = !!bot.errand && (bot.key === 'codex' && !bot.path.length || bot.errand === 'return-done');
+        if (bot.errandCard.visible && bot.errand === 'return-done') { bot.errandCard.position.copy(bot.pos).add(V(0, 1.25, 0.5)); bot.errandCard.rotation.set(-0.3, bot.rotY, 0); }
+        else if (bot.errandCard.visible) {
+          const desk = f.codexSeat.pos.clone().add(V(0, 1.05, -0.3));
+          const visitor = bot.pos.clone().add(V(0, 1.3, 0));
+          if (bot.errand === 'pickup') {
+            const printer = f.codexSeat.pos.clone().add(V(0.8, 0.75, -0.75));
+            const printed = printer.clone().add(V(0, 0, 0.4));
+            if (bot.errandWait < 0.6) bot.errandCard.position.lerpVectors(printer, printed, bot.errandWait / 0.6);
+            else bot.errandCard.position.lerpVectors(printed, visitor, Math.min(1, (bot.errandWait - 0.6) / 0.8));
+          } else bot.errandCard.position.lerpVectors(visitor, desk, Math.min(1, bot.errandWait / 1.5));
+          bot.errandCard.rotation.set(-0.3, 0, 0);
+        }
+      }
       // finished a task: a little spin-jump on the spot before heading off
       const party = bot.celebrate > 0;
       if (party) bot.celebrate -= dt;
       bot.doneShow -= dt;
-      const sp = s === 'resting' && bot.spot != null ? f.rest[bot.spot] : null;
+      const sp = s === 'resting' && !bot.errand && bot.spot != null ? f.rest[bot.spot] : null;
       if (this.wanders && sp && !bot.path.length && !party && (bot.wander -= dt) < 0) {
         const i = f.moveRest(bot.id);
         const next = f.rest[i];
@@ -804,9 +860,23 @@ export class BotLayer {
       const near = this.spread || (this.focus ? f.team === this.focus : f.number === this.building.count);
       const say = this.focus && !this.spread ? true : look === 'waiting' || look === 'error';
       bot.label.visible = shown(f) && (bot.id === this.selected || (near && (named || say)));
+      if (bot.codexHint && bot.moodEl) { bot.moodEl.firstChild.style.opacity = '0'; bot.codexHint = false; }
       this.mood(bot, dt, s, act, moving || party, shown(f) && near);
+      if (bot.rec.codex?.state === 'running' && !bot.errand && s !== 'waiting' && s !== 'error') {
+        if (!bot.moodEl) { const el = document.createElement('div'); el.className = 'mood'; el.innerHTML = '<span style="display:block;font-size:calc(17px * var(--z, 1));line-height:1;padding:4px 6px;border-radius:999px;background:rgba(255,255,255,.92)"></span>'; bot.moodEl = el; bot.moodObj = new CSS2DObject(el); bot.root.add(bot.moodObj); }
+        bot.codexHint = true; bot.moodObj.position.set(0.55, bot.height + 0.25, 0); bot.moodObj.visible = shown(f) && near; bot.moodEl.firstChild.textContent = '⏳'; bot.moodEl.firstChild.style.opacity = '1'; bot.moodEl.firstChild.style.transform = '';
+      }
     }
 
+    for (const f of floors) {
+      const c = f.codexBot; if (!c) continue;
+      const busy = [...this.bots.values()].some((b) => b.floor === f && b.rec.codex?.state === 'running');
+      const ct = busy ? t * 1.8 : t * 0.3;
+      const P = posture(c, { t: ct, ph: ct, dt, s: busy ? 'working' : 'resting', atSeat: true, seat: f.codexSeat, moving: false, party: false, climb: 0, walk: 0 });
+      c.chibi.apply(P, 1 - Math.exp(-dt * 16));
+      if (busy) f.codexTexture.offset.y -= dt * 0.08;
+      f.codexLed.visible = Math.sin(t * 5) > -0.3;
+    }
     alertMat.waiting.opacity = 0.55 + 0.35 * Math.sin(t * 5);
     alertMat.error.opacity = 0.55 + 0.4 * Math.sin(t * 9);
     for (const f of floors) if (shown(f)) this.floorFx(f, t);

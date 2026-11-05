@@ -65,6 +65,16 @@ const pick = (a) => a[Math.floor(Math.random() * a.length)];
 // ?sleepy: everyone but a few starts on a break (for recordings about dozing bots)
 const AWAKE = new Set(['Arxiv Owl', 'Repo Scout', 'Lead Finder', 'Inbox Butler']);
 
+const codexCounts = new Map();
+export function codexDemo(name, done = false) {
+  const b = [...state.bots.values()].find((x) => x.id === name || x.name.toLowerCase() === String(name).toLowerCase());
+  if (!b) return;
+  if (!done) codexCounts.set(b.id, (codexCounts.get(b.id) || 0) + 1);
+  ingest({ bot: b.id, state: 'working', task: b.task, codex: { state: done ? 'done' : 'running', at: Date.now(), task: 'Fix the flaky test' } });
+  const top = [...codexCounts].map(([id, count]) => ({ bot: id, name: state.bots.get(id)?.name || id, count })).sort((a, b) => b.count - a.count);
+  ingest({ t: 'codex', today: top.reduce((n, x) => n + x.count, 0), day: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei' }).format(Date.now()), top: top.slice(0, 5) });
+}
+
 function startDemo(still, sleepy) {
   setConn('demo', 'live');
   const now = Date.now();
@@ -80,12 +90,18 @@ function startDemo(still, sleepy) {
     else ingest({ bot: b.name, state: init, task }, at);
   }
   // ?still: no random events, so a recording can script every change itself
-  if (!still) setInterval(tick, 1800);
+  if (!still) {
+    setInterval(tick, 1800);
+    const names = ['Arxiv Owl', 'Hook Writer', 'Lead Finder']; let n = 0;
+    const cycle = () => { const name = names[n++ % names.length]; codexDemo(name); setTimeout(() => codexDemo(name, true), 30000 + Math.random() * 10000); };
+    setTimeout(cycle, 4000); setInterval(cycle, 45000);
+  }
 }
 
 function tick() {
   const bots = [...state.bots.values()];
   const b = pick(bots);
+  if (b.codex?.state === 'running') return;
   const tasks = TASKS[b.team] || TASKS.Lab;
   const r = Math.random();
   // roughly half the office on a break at any time, so the zones stay lively

@@ -114,3 +114,29 @@ export function statusAll(rows, transcriptOf, now) {
   }
   return out;
 }
+
+// Detect both recorded shell calls and explicit assistant hand-offs.
+export function codexOf(entries, now, botState = null) {
+  entries = Array.isArray(entries) ? entries.filter((e) => e && typeof e === 'object') : [];
+  const matches = [];
+  for (const e of entries) {
+    let payload = '';
+    try { payload = JSON.stringify(e); } catch { continue; }
+    const tool = /tool|shell|command|exec|bash/i.test(`${e.kind || ''} ${e.type || ''}`) || ['command', 'args', 'input'].some((k) => k in e);
+    const text = String(e.message?.content || e.content || e.text || '');
+    const hand = output(e) && /\bcodex\b/i.test(text) && (/\b(hand|delegat|ask|run|send|let|have|using|use|kick|start)\w*/i.test(text) || /(?:交給|請|用|讓|叫).*codex/i.test(text));
+    if ((tool && /\bcodex(\s+(exec|e|run|apply|resume)\b|\s+["'\-]|(?=["\\]|$))/i.test(payload)) || hand) matches.push({ e, tool, at: Number(e.timestampMs || e.at || 0), text });
+  }
+  const handoffs = [];
+  for (const h of matches.sort((a, b) => a.at - b.at)) if (h.at && (!handoffs.length || h.at - handoffs.at(-1) >= 120e3)) handoffs.push(h.at);
+  const h = matches.at(-1);
+  if (!h || !h.at) return { state: null, at: null, task: '', why: 'no hand-off', handoffs };
+  const after = entries.filter((e) => (e.timestampMs || 0) > h.at);
+  const finished = h.tool && (['result', 'output', 'exitCode', 'endedAt'].some((k) => eHas(h.e, k)) || /^(done|completed|finished|success|failed)$/i.test(String(h.e.status || '')));
+  const reply = after.find((e) => output(e) && !interim(e.message || e) && !(/\bcodex\b/i.test(String(e.message?.content || e.content || '')) && /hand|delegat|using/i.test(String(e.message?.content || e.content || ''))));
+  const lastInbound = entries.filter(inbound).at(-1)?.timestampMs || 0;
+  const state = finished || reply || (botState && botState !== 'working') ? 'done' : ((h.at >= lastInbound || botState === 'working') && now - h.at < TURN_MAX ? 'running' : null);
+  const at = reply?.timestampMs || Number(h.e.endedAt) || h.at;
+  return { state: state === 'done' && now - at > 15 * 60e3 ? null : state, at, task: snippet(h.e.command || h.e.input || h.text || 'Codex task'), why: finished ? 'tool finished' : reply ? 'assistant replied' : state === 'done' ? 'bot stopped working' : state === 'running' ? 'hand-off in current turn' : 'hand-off expired', handoffs };
+}
+const eHas = (e, k) => Object.prototype.hasOwnProperty.call(e, k) && e[k] != null;

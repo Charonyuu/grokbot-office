@@ -12,6 +12,7 @@ export const state = {
   routines: [],
   source: 'demo',
   usageUnit: 'tokens', // what bot.usage counts
+  codex: null,
   plan: null, // account-wide usage, when the source knows it
   conn: 'live',
 };
@@ -102,6 +103,7 @@ export function applyStatus(msg, at = Date.now()) {
     if (!state.teams.includes(bot.team)) state.teams.unshift(bot.team);
     notify('roster');
   }
+  bot.codex = msg.codex || null;
   const raw = String(msg.state ?? msg.status ?? '').toLowerCase().trim();
   const next = normState(raw) || bot.state;
   const done = /^(done|finished|complete)/.test(raw);
@@ -142,6 +144,7 @@ export function ingest(msg, at = Date.now()) {
   const t = msg.t || msg.type;
   if (t === 'roster') applyRoster(msg.bots, at);
   else if (t === 'usage') applyUsage(msg);
+  else if (t === 'codex') { state.codex = msg; notify('codex'); }
   else if (t === 'plan') { state.plan = { percent: +msg.percent || 0, resetAt: +msg.resetAt || 0, label: String(msg.label || '').slice(0, 30) }; notify('plan'); }
   else if (t === 'routines') { state.routines = (msg.list || []).slice(0, 20); notify('routines'); }
   else applyStatus(msg, at);

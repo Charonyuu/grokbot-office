@@ -29,6 +29,9 @@ const bots = [
   ['recent', 'Just Replied', 'leaf', 'green', [user(6, 'Status?'), say(5, 'All good, nothing new.')], 'working'],
   ['stopped', 'Stopped Task', 'gem', 'gray', [user(55, 'Crawl the site'), say(54, 'Starting now.'), notice(3, 'A background task was stopped after 50 minutes so it could not finish.')], 'error'],
   ['old', 'Old Quiet', 'pebble', 'brown', [user(300, 'hi'), say(299, 'Hello! How can I help today, anything you need from me?!')], 'resting'],
+  ['codex-run', 'Codex Running', 'blob', 'blue', [user(5, 'Fix tests'), { kind: 'tool', command: 'codex exec --full-auto \"fix the flaky test\"', timestampMs: m(4) }], 'working', 'running'],
+  ['codex-done', 'Codex Done', 'egg', 'green', [user(8, 'Fix tests'), { kind: 'shell', command: 'codex exec fix', result: 'ok', exitCode: 0, timestampMs: m(4) }, say(3, 'The tests are fixed.')], 'working', 'done'],
+  ['codex-text', 'Codex Text', 'blob', 'violet', [user(6, 'Fix tests'), say(5, "I'll hand this to Codex")], 'working', 'running'],
   ['routine', 'Routine Run', 'square', 'yellow', [say(3, 'Weekly digest sent to your inbox.')], 'working'],
 ];
 put(`${A}.roster.last-roster`, { rows: bots.map(([id, name, shape, color, ents]) => ({ id, name, avatarShape: shape, avatarColor: color, lastActivityAt: ents.at(-1).timestampMs, updatedAt: ents.at(-1).timestampMs, lastEntry: { kind: 'text', text: ents.at(-1).content || ents.at(-1).message?.content || ents.at(-1).text || '' }, awaitingUserResponse: false, isGroup: false })) });
@@ -38,13 +41,14 @@ writeFileSync(`${dir}/expected.json`, JSON.stringify(Object.fromEntries(bots.map
 console.log('wrote', dir, bots.length, 'bots');
 
 if (process.argv.includes('--check')) {
-  const { statusAll } = await import('../bin/status.mjs');
+  const { statusAll, codexOf } = await import('../bin/status.mjs');
   const rows = bots.map(([id, name, , , ents]) => ({ id, name, lastActivityAt: ents.at(-1).timestampMs }));
   const states = statusAll(rows, (id) => bots.find((b) => b[0] === id)[4], Date.now());
   let bad = 0;
-  for (const [id, name, , , , want] of bots) {
+  for (const [id, name, , , ents, want, codexWant] of bots) {
     const s = states.get(id);
     if (s.state !== want) bad++;
+    if (codexWant && codexOf(ents, now, s.state).state !== codexWant) { bad++; console.log('BAD Codex', name, codexOf(ents, now, s.state)); }
     console.log(`${s.state === want ? 'ok ' : 'BAD'} ${name.padEnd(14)} ${s.state.padEnd(8)} ${s.why}`);
   }
   if (bad) { console.log(`${bad} wrong`); process.exit(1); }

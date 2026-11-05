@@ -25,7 +25,7 @@ export function floorPlan(n) {
   const cols = Math.max(1, Math.ceil(pods / rows));
   const deskLen = cols * POD_X;
   const W = 2.8 + deskLen + 3.4 + ZONE_W + 0.6;
-  const D = Math.max(22, rows * POD_Z + 3);
+  const D = Math.max(22, rows * POD_Z + 8);
   return { rows, cols, pods, desks, deskLen, W, D, seats: pods * 4, key: `${rows}x${cols}x${pods}` };
 }
 
@@ -523,6 +523,7 @@ export class Floor {
     this.zx1 = W / 2 - 0.6;
 
     this.seats = this.desks();
+    this.codexCorner();
     this.cafe();
     this.gym();
     this.lounge();
@@ -534,6 +535,39 @@ export class Floor {
     this.inner.add(this.plates); // after baking: rebuilt whenever who sits where changes
     bake(this.facade);
     this.facade.traverse((o) => { o.userData.team = team; });
+  }
+
+  codexCorner() {
+    const x = -this.W / 2 + 1.5, z = -this.D / 2 + 1.5, g = this.inner;
+    g.add(box(2.4, 0.18, 1.2, M.dark, x, 1.35, z));
+    for (const dx of [-0.95, 0.95]) g.add(box(0.12, 1.3, 0.12, M.frame, x + dx, 0.65, z));
+    g.add(box(1.82, 0.92, 0.12, M.frame, x, 2.35, z - 0.25));
+    g.add(box(0.65, 0.32, 0.55, M.white, x + 0.8, 1.6, z + 0.05));
+    g.add(box(0.55, 1.25, 0.75, M.frame, x - 0.95, 0.63, z + 0.95));
+    const led = box(0.09, 0.09, 0.03, C(0x37e69a, { emissive: 0x19a65b }), x - 0.95, 1.05, z + 1.34);
+    led.userData.keep = true; g.add(led); this.codexLed = led;
+    const tex = canvasTex(256, 256, (c) => { c.fillStyle = '#10201b'; c.fillRect(0, 0, 256, 256); c.font = '14px monospace'; for (let i = 0; i < 16; i++) { c.fillStyle = i % 3 ? '#74e6a1' : '#eefcf4'; c.fillText(['const task = await run();', '  return result.ok;', '// Codex is working', '  applyPatch(files);'][i % 4], 8, 16 + i * 16); } });
+    tex.wrapT = THREE.RepeatWrapping; this.textures.push(tex); this.codexTexture = tex;
+    const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.8), new THREE.MeshBasicMaterial({ map: tex }));
+    screen.position.set(x, 2.35, z - 0.18); screen.userData.keep = true; g.add(screen);
+    this.codexBoardCanvas = document.createElement('canvas'); this.codexBoardCanvas.width = 512; this.codexBoardCanvas.height = 320;
+    const boardTex = new THREE.CanvasTexture(this.codexBoardCanvas); this.textures.push(boardTex); this.codexBoardTexture = boardTex;
+    const board = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 2.1), new THREE.MeshBasicMaterial({ map: boardTex }));
+    board.position.set(-this.W / 2 + 0.21, 4.15, z + 1.1); board.rotation.y = Math.PI / 2; board.userData.keep = true; g.add(board);
+    this.codexSpot = { pos: V(x + 1.7, 0, z + 2.1), approach: null, face: -Math.PI / 2 };
+    this.codexSeat = { pos: V(x, 0.85, z + 0.8), face: Math.PI, reach: V(0, 1.35, 1), type: 'chair' };
+    this.solid(x, z, 2.4, 1.2); this.solid(x - 0.95, z + 0.95, 0.55, 0.75);
+    this.setCodexBoard(null);
+  }
+
+  setCodexBoard(summary) {
+    const key = JSON.stringify(summary || {}); if (key === this.codexBoardKey) return; this.codexBoardKey = key;
+    const c = this.codexBoardCanvas.getContext('2d'); c.fillStyle = '#101c20'; c.fillRect(0, 0, 512, 320);
+    c.strokeStyle = '#37d9d0'; c.lineWidth = 3; c.strokeRect(8, 8, 496, 304);
+    c.fillStyle = '#7ee7bb'; c.font = 'bold 40px sans-serif'; c.fillText('CODEX TODAY', 24, 52);
+    c.fillStyle = '#ffffff'; c.font = 'bold 110px sans-serif'; c.fillText(String(summary?.today || 0), 24, 155);
+    c.font = '34px sans-serif'; (summary?.top || []).slice(0, 3).forEach((b, i) => { c.fillStyle = b.color || '#7ee7bb'; c.fillText(`#${i + 1}`, 24, 204 + i * 46); c.fillStyle = '#ffffff'; c.fillText(`${b.name}  ${b.count}`, 85, 204 + i * 46, 400); });
+    this.codexBoardTexture.needsUpdate = true;
   }
 
   solid(x, z, w, d) { this.blocks.push({ x, z, w, d }); }
@@ -1062,7 +1096,7 @@ export class Floor {
     this.spawnOut = V(this.aisleX, 0, lz - 2.6);
     // a Google-coloured line down the corridor floor
     PRIMARY.forEach((c, i) => g.add(box(0.12, 0.02, D - 4.6, C(c, { roughness: 0.6 }), this.aisleX - 0.45 + i * 0.3, 0.012, -1.0)));
-    const spots = [[-W / 2 + 1.2, -D / 2 + 1.2, 0.95], [-W / 2 + 1.2, D / 2 - 1.2, 1.0], [this.zx0 + 12.9, -D / 2 + 1.0, 1.0], [this.zx0 + 12.9, 0, 0.8], [this.zx0 + 0.7, D / 2 - 1.0, 0.9], [this.zx0 + 14.5, D / 2 - 1.0, 1.05]];
+    const spots = [[-W / 2 + 1.2, D / 2 - 1.2, 1.0], [this.zx0 + 12.9, -D / 2 + 1.0, 1.0], [this.zx0 + 12.9, 0, 0.8], [this.zx0 + 0.7, D / 2 - 1.0, 0.9], [this.zx0 + 14.5, D / 2 - 1.0, 1.05]];
     for (const [x, z, sc] of spots) {
       g.add(plant(x, z, sc));
       this.round(x, z, 0.42 * sc);

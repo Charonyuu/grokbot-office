@@ -5,7 +5,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { NIGHT_MATS, Building, H } from './world.js';
 import { BotLayer } from './bots.js';
 import { state, subscribe, ingest } from './store.js';
-import { startFeed } from './feed.js';
+import { startFeed, codexDemo } from './feed.js';
 import { createUI } from './ui.js';
 import { createQuality } from './quality.js';
 
@@ -312,6 +312,7 @@ subscribe((kind) => {
       else focusFloor(focus);
     }
   }
+  if (kind === 'codex') for (const f of building.floors.values()) f.setCodexBoard({ ...state.codex, top: (state.codex?.top || []).map((x) => ({ ...x, color: state.bots.get(x.bot)?.color })) });
   ui.render();
 });
 
@@ -349,6 +350,7 @@ renderer.setAnimationLoop((now) => {
 // Hooks for scripted recordings (promo videos).
 window.__office = {
   focusFloor, spreadOut, select, ingest, botLayer, building, controls, camera,
+  codexDemo: (name) => codexDemo(name), codexDone: (name) => codexDemo(name, true),
   // jump the camera to a spot on the focused floor (screenshots of one zone)
   look(x, z, zoom = 1.6) {
     const f = focus && building.floor(focus);
