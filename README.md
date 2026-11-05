@@ -64,7 +64,7 @@ Or open http://127.0.0.1:4321/?debug for a panel with the same list, or http://1
 
 ### Codex office
 
-Each floor has a Codex office with eight robots and a usage board on the office wall. Bots supervise their assigned robot while Codex runs; when it finishes, they collect a printout, show ✅, and celebrate with confetti before returning to their desks. Detection uses Codex tool calls or explicit hand-off messages, so the displayed state is an estimate when tool calls are absent from the app cache.
+Each floor has a glass-walled Codex office with eight Codex robots and a usage board (today's hand-offs, Asia/Taipei day, and the top bots) on its wall. A bot using Codex walks in and supervises its own robot (one bot per robot; extras queue at the door), and that robot types while its screen scrolls code. When Codex finishes, the desk prints a code sheet, the bot collects it, shows ✅, gets confetti and returns to its desk. The app's cache doesn't record tool calls, so detection works per turn: a working bot whose current turn mentions Codex (or `cx.sh` / `codex_quota`), or a bot that often uses Codex and just replied with a short "on it", counts as using Codex. A silent Codex run in a turn that never mentions Codex can be missed. `/api/debug` shows the reason for each bot.
 
 ### Desks and break zones
 
@@ -134,7 +134,7 @@ Everything stays on your machine. The server only listens on 127.0.0.1, reads th
 
 **誰在工作？** app 的本機快取會記錄訊息，但可能不記錄中間的工具執行、瀏覽和子代理，所以 bot 回了「收到／正在處理」後安靜做事的那段時間，舊版會誤判成休息。現在只要符合下面任一條件就算工作中，bot 會留在座位上：有人（你或其他 bot）傳訊給它但它還沒回；它最後回的是「收到／正在處理／稍等」這類短訊息（最多 50 分鐘）；它把工作交給別的 bot，對方還沒回報；它找來幫忙的 bot 還在做；它 8 分鐘內有發言。想核對的話，執行 `GROKBOT_DEBUG=1 node bin/office.mjs`（終端機會列出每個 bot 的狀態和原因），或打開 http://127.0.0.1:4321/?debug 。時間長度可以用 `GROKBOT_GRACE_MIN`、`GROKBOT_TURN_MAX_MIN`、`GROKBOT_POLL_SEC` 調整。
 
-每層樓都有 Codex 辦公室、八個機器人和牆上的使用量排行榜。Codex 執行時，機器人會前往監督；完成後拿取列印結果、顯示 ✅ 並以彩紙慶祝，再返回座位。系統依工具呼叫或明確委派訊息估計狀態；若 app 快取沒有工具呼叫，便只能偵測明確訊息。
+每層樓有一間玻璃隔間的 Codex 辦公室，裡面有 8 個 Codex 機器人，牆上的看板顯示今天（台北時間）的委派次數和排行。正在用 Codex 的 bot 會走進去，站在分配給它的機器人旁邊監督（一個 bot 對一個機器人，滿了就在門口排隊），那個機器人會快速打字、螢幕捲動程式碼。完成時桌上印出程式碼紙，bot 拿走、頭上冒 ✅ 和彩帶，再回到座位。app 快取不記錄工具呼叫，所以改成以回合判斷：工作中的 bot 這一回合提到 Codex（或 `cx.sh`、`codex_quota`），或常用 Codex 的 bot 剛回了「已開工」這類短訊息，就算在用 Codex；整個回合都沒提到 Codex 的話可能偵測不到。`/api/debug` 會列出每個 bot 的判斷原因。
 
 辦公室參考 Google 辦公室的配置，除了座位區，每層樓還有：
 
