@@ -20,6 +20,7 @@ const kfmt = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${(n / 
 
 const ICON = {
   logo: '<svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true"><rect x="3" y="4" width="26" height="25" rx="9" fill="#ff6b57"/><rect x="11" y="12" width="3.4" height="7" rx="1.7" fill="#fff"/><rect x="17.6" y="12" width="3.4" height="7" rx="1.7" fill="#fff"/></svg>',
+  everyone: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/></svg>',
   building: '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 14V3.5L8 2l5 1.5V14M3 14h10M6 6h1M9 6h1M6 9h1M9 9h1M7 14v-2h2v2"/></svg>',
   x: '<svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg>',
   minus: '<svg width="12" height="12" viewBox="0 0 12 12" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M2.5 6h7"/></svg>',
@@ -83,8 +84,10 @@ function ring(list) {
   return `conic-gradient(${stops.join(',')})`;
 }
 
-export function createUI(root, { state, onFloor, onSelect, onZoom }) {
-  let focus = null, selected = null, queued = false, cardKey = '', swapTimer = 0, lastInbox = null;
+const PLACE = { desk: 'At desks', cafe: 'Café', gym: 'Gym', lounge: 'Lounge' };
+
+export function createUI(root, { state, onFloor, onSpread, onSelect, onZoom, activityOf = () => null, places = () => null }) {
+  let focus = null, spread = false, selected = null, queued = false, cardKey = '', swapTimer = 0, lastInbox = null;
 
   root.innerHTML = `
     <div id="brand" class="panel pill">${ICON.logo}<b>GrokBot Office</b><span class="live"><i></i><span id="live-text">Live</span><span class="sep">·</span><span id="clock"></span></span></div>
@@ -92,14 +95,15 @@ export function createUI(root, { state, onFloor, onSelect, onZoom }) {
     <nav id="lift" class="panel" aria-label="Floors"></nav>
     <section id="card" class="panel"></section>
     <section id="inbox"></section>
-    <div id="zoom" class="panel pill"><button data-zoom="-1" aria-label="Zoom out">${ICON.minus}</button><button data-zoom="1" aria-label="Zoom in">${ICON.plus}</button></div>`;
+    <div id="hint">Drag to move · Right-drag or ⇧-drag to rotate · Scroll or pinch to zoom · Double-click to reset</div><div id="zoom" class="panel pill"><button data-zoom="0" aria-label="Reset view" title="Reset view"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button><button data-zoom="-1" aria-label="Zoom out">${ICON.minus}</button><button data-zoom="1" aria-label="Zoom in">${ICON.plus}</button></div>`;
   const $ = (id) => root.querySelector(id);
 
   root.addEventListener('click', (e) => {
-    const t = e.target.closest('[data-floor],[data-overview],[data-bot],[data-zoom],[data-close]');
+    const t = e.target.closest('[data-floor],[data-overview],[data-spread],[data-bot],[data-zoom],[data-close]');
     if (!t) return;
     if (t.dataset.floor != null) onFloor(t.dataset.floor);
     else if (t.hasAttribute('data-overview')) onFloor(null);
+    else if (t.hasAttribute('data-spread')) onSpread?.();
     else if (t.dataset.bot) onSelect(t.dataset.bot);
     else if (t.dataset.zoom) onZoom(+t.dataset.zoom);
     else if (t.hasAttribute('data-close')) onSelect(null);
@@ -123,6 +127,7 @@ export function createUI(root, { state, onFloor, onSelect, onZoom }) {
         <div class="id-name">${esc(b.name)}</div>
         <div class="id-sub">${esc(b.team)} · floor ${floorNo(b.team)}</div>
         <div class="state d-${b.state}"><i></i>${STATE_LABEL[b.state]} · ${ago(now - b.since)}</div>
+        ${(() => { const a = activityOf(b.id); return a && b.state === 'resting' ? `<div class="where">${esc(a.label)}${a.zone !== 'desk' ? ` · ${esc(PLACE[a.zone])}` : ''}</div>` : ''; })()}
       </div>
       <div class="now"><span>${b.state === 'waiting' ? 'Asking you' : b.state === 'error' ? 'Stuck on' : b.state === 'resting' ? 'Last task' : 'Now'}</span><p>${esc(b.task || 'Nothing yet')}</p></div>
       <div class="nums"><div><b>${b.steps}</b>updates</div><div><b>${b.tasks}</b>done</div><div><b>${hours}h</b>busy</div><div><b>${kfmt(b.usage)}</b>${esc(state.usageUnit)}</div></div>
@@ -134,6 +139,7 @@ export function createUI(root, { state, onFloor, onSelect, onZoom }) {
   function floorCard(team) {
     const list = bots().filter((b) => b.team === team);
     return `<div class="fl-top"><span class="fl-no">${floorNo(team)}</span><div><div class="fl-name">${esc(team)}</div><div class="fl-meta">${list.length} bots · ${count(list, 'working')} busy${count(list, 'waiting') ? ` · <em>${count(list, 'waiting')} need you</em>` : ''}${count(list, 'error') ? ` · <em class="e">${count(list, 'error')} stuck</em>` : ''}</div></div></div>
+      ${(() => { const p = places(team); return p ? `<div class="places">${Object.entries(PLACE).map(([k, v]) => `<span class="pc pc-${k}"><b>${p[k]}</b>${v}</span>`).join('')}</div>` : ''; })()}
       <div class="tiles">${list.map((b) => `<button class="tile d-${b.state}" data-bot="${esc(b.id)}">${avatar(b.shape, b.color, 34)}<span>${esc(b.name)}</span><i></i></button>`).join('')}</div>
       <div class="sub-h">Latest on this floor</div>
       ${feed(state.activity.filter((a) => state.bots.get(a.id)?.team === team).slice(0, 4))}`;
@@ -148,6 +154,8 @@ export function createUI(root, { state, onFloor, onSelect, onZoom }) {
       ${plan ? `<div class="plan"><div class="plan-row"><span>${esc(plan.label || 'Plan')} this week</span><b>${plan.percent.toFixed(0)}%</b></div><span class="u-bar"><i style="width:${Math.min(100, Math.max(2, plan.percent)).toFixed(1)}%;background:${plan.percent > 85 ? 'var(--error)' : plan.percent > 60 ? 'var(--waiting)' : 'var(--working)'}"></i></span>${plan.resetAt ? `<div class="plan-reset">resets in ${ago(plan.resetAt - now)}</div>` : ''}</div>` : ''}
       <div class="sub-h">${state.usageUnit === 'tokens' ? 'Who uses the most' : 'Most active this week'}</div>
       <ul class="usage">${list.slice(0, 6).map((b) => `<li><button class="row" data-bot="${esc(b.id)}">${avatar(b.shape, b.color, 20)}<span class="u-name">${esc(b.name)}</span><span class="u-bar"><i style="width:${Math.max(3, (b.usage / max) * 100).toFixed(1)}%;background:${esc(b.color)}"></i></span><span class="u-val">${kfmt(b.usage)}</span></button></li>`).join('')}</ul>
+      <div class="sub-h">Every bot <span class="sub-n">${list.length}</span></div>
+      ${state.teams.map((team) => { const fb = bots().filter((b) => b.team === team); return `<div class="every"><div class="every-h">${floorNo(team)} · ${esc(team)}</div><div class="mini">${fb.map((b) => `<button class="mb d-${b.state}" data-bot="${esc(b.id)}" title="${esc(b.name)} · ${STATE_LABEL[b.state]}">${avatar(b.shape, b.color, 22)}<i></i></button>`).join('')}</div></div>`; }).join('')}
       <div class="sub-h">Latest</div>
       ${feed(state.activity.slice(0, 4))}`;
   }
@@ -164,7 +172,7 @@ export function createUI(root, { state, onFloor, onSelect, onZoom }) {
     $('#pulse').innerHTML = `<span class="bar">${STATES.map((s) => (n[s] ? `<i class="d-${s}" style="flex:${n[s]}"></i>` : '')).join('')}</span>
       <span class="pl d-working"><b>${n.working}</b> busy</span><span class="pl d-waiting${n.waiting ? ' on' : ''}"><b>${n.waiting}</b> need you</span><span class="pl d-error${n.error ? ' on' : ''}"><b>${n.error}</b> stuck</span><span class="pl d-resting"><b>${n.resting}</b> on a break</span>`;
 
-    $('#lift').innerHTML = `<button class="lb all${focus ? '' : ' on'}" data-overview title="Whole building"><span class="lb-btn">${ICON.building}</span><span class="lb-name">All</span></button>${state.teams
+    $('#lift').innerHTML = `<button class="lb all${spread ? ' on' : ''}" data-spread title="Every floor side by side: all your bots at once"><span class="lb-btn">${ICON.everyone}</span><span class="lb-name">All bots<em class="n">${list.length}</em></span></button><button class="lb all${focus || spread ? '' : ' on'}" data-overview title="Whole building"><span class="lb-btn">${ICON.building}</span><span class="lb-name">Building</span></button>${state.teams
       .map((team) => {
         const fb = list.filter((b) => b.team === team);
         const hot = count(fb, 'waiting') + count(fb, 'error');
@@ -202,7 +210,7 @@ export function createUI(root, { state, onFloor, onSelect, onZoom }) {
 
   return {
     render: schedule,
-    setFocus(f) { focus = f; schedule(); },
+    setFocus(f, s = false) { focus = f; spread = s; schedule(); },
     setSelected(id) { selected = id; schedule(); },
   };
 }

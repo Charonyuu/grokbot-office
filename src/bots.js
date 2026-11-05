@@ -1,14 +1,26 @@
-// The bots: soft glossy blobs with two pill eyes, built from code (no model files).
+// The bots: little chibi people with the bot's own avatar as their head (shape, colour
+// and pill eyes), built from code (no model files).
 
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
-import { LANE_X } from './world.js';
 import { petGeometry, petExtras } from './pets.js';
+import { Chibi, HIPS, NECK, HEAD, vec, mirror } from './chibi.js';
 
 const SCALE = 1.3;
 const SPEED = 3.6;
+const codexBandGeo = new THREE.TorusGeometry(0.68, 0.045, 6, 24, Math.PI);
+const codexCupGeo = new THREE.CylinderGeometry(0.19, 0.19, 0.13, 12);
+const codexHeadMat = new THREE.MeshStandardMaterial({ color: 0x37d9d0 });
+const cardGeo = new THREE.PlaneGeometry(0.55, 0.4);
+const cardCanvas = document.createElement('canvas');
+cardCanvas.width = 128; cardCanvas.height = 96;
+const cardCtx = cardCanvas.getContext('2d');
+cardCtx.fillStyle = '#fff4c8'; cardCtx.fillRect(0, 0, 128, 96);
+cardCtx.fillStyle = '#39434a';
+for (const [y, width] of [[20, 84], [35, 65], [50, 90], [65, 72]]) cardCtx.fillRect(14, y, width, 4);
+const cardMat = new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(cardCanvas), side: THREE.DoubleSide });
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 function roundedShape(pts, r) {
@@ -105,12 +117,19 @@ export class Bot {
 
     this.root = new THREE.Group();
     this.pivot = new THREE.Group();
-    const inner = new THREE.Group();
-    inner.scale.setScalar(SCALE);
     this.root.add(this.pivot);
-    this.pivot.add(inner);
 
+    // the body, and the avatar head on its neck
     this.gloss = gloss;
+    this.chibi = new Chibi(rec, gloss);
+    this.limbs = this.chibi.mesh;
+    this.limbs.userData.botId = rec.id;
+    this.pivot.add(this.limbs);
+    const k = HEAD / 1.75;
+    const inner = new THREE.Group();
+    inner.scale.setScalar(k);
+    inner.position.y = -0.04;
+    this.chibi.head.add(inner);
     this.mat = bodyMat(rec.color, gloss);
     this.body = new THREE.Mesh(info.geo, this.mat);
     this.body.castShadow = true;
@@ -125,7 +144,12 @@ export class Bot {
       inner.add(m);
       return m;
     });
-    this.height = info.height * SCALE;
+    const bb = info.geo.boundingBox;
+    this.chibi.headFront = bb.max.z * k;
+    this.chibi.headHalf = bb.max.x * k;
+    this.chibi.headDepth = (bb.max.z - bb.min.z) * k;
+    this.headH = info.height * k;
+    this.height = HIPS + NECK - 0.04 + this.headH;
     const nose = info.eyes[1];
     this.snot = new THREE.Mesh(snotGeo, snotMat);
     this.snot.position.set(nose.p.x + 0.13, nose.p.y - 0.16, nose.p.z + 0.1);
@@ -147,19 +171,23 @@ export class Bot {
     this.face = 0;
     this.moveFace = 0;
     this.walk = 0;
+    this.side = V(0, 0, 0); // sidestep while passing another bot
     this.phase = Math.random() * 6.28;
     this.blink = 1 + Math.random() * 4;
     this.blinkT = 0;
     this.floor = null;
     this.seat = null;
     this.spot = null;
+    this.exit = null; // where to step out to when leaving the seat or spot it is on
+    this.lastZone = null;
     this.key = '';
     this.placed = false;
     this.shownState = '';
-    this.wander = 4 + Math.random() * 8;
+    this.wander = 6 + Math.random() * 10;
     this.celebrate = 0;
     this.doneShow = 0;
     this.seenDone = 0;
+    this.alert = null;
   }
 
   // clear-coat shine on capable machines, plain plastic on the low tier
@@ -169,17 +197,42 @@ export class Bot {
     this.mat.dispose();
     this.mat = bodyMat(this.color, gloss);
     this.body.material = this.mat;
+    this.chibi.setGloss(gloss);
+    this.limbs.castShadow = gloss; // the low tier skips the body's shadow
   }
 
   dispose() {
     this.root.removeFromParent();
     this.el.remove();
+    this.errandCard?.removeFromParent();
+    this.moodEl?.remove();
     this.mat.dispose();
+    this.limbs.geometry.dispose();
+    this.limbs.skeleton.dispose();
     this.floor?.releaseRest(this.id);
   }
 }
 
 const shown = (f) => !!f && f.group.visible && f.inner.visible;
+
+// What bots on a break get up to, by spot. The bubble shows the emoji.
+export const ACTS = {
+  nap: { label: 'Napping on the sofa', emoji: '' },
+  relax: { label: 'Chilling in the lounge', emoji: '🎧' },
+  game: { label: 'Playing video games', emoji: '🎮' },
+  foosball: { label: 'Playing foosball', emoji: '⚽' },
+  run: { label: 'Running on the treadmill', emoji: '🏃' },
+  pingpong: { label: 'Playing ping-pong', emoji: '🏓' },
+  hoops: { label: 'Shooting hoops', emoji: '🏀' },
+  yoga: { label: 'Doing yoga', emoji: '🧘' },
+  eat: { label: 'Having lunch', emoji: '🍜' },
+  snack: { label: 'Grabbing a snack', emoji: '🍩' },
+  coffee: { label: 'Getting a coffee', emoji: '☕' },
+  chat: { label: 'Chatting', emoji: '💬' },
+};
+export const ZONES = { cafe: 'Café', gym: 'Gym', lounge: 'Lounge' };
+// how long a bot stays at a spot before wandering on, in seconds [min, extra]
+const STAY = { nap: [24, 30], relax: [14, 16], eat: [16, 14], chat: [10, 12], yoga: [16, 14], run: [12, 14] };
 
 const ICONS = {
   working: '<i></i><i></i><i></i>',
@@ -188,26 +241,293 @@ const ICONS = {
   done: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.3 5 8.6l4.5-5"/></svg>',
   resting: '<span class="zz">z</span><span class="zz">z</span><span class="zz">Z</span>',
 };
+const iconFor = (look) => (ICONS[look] ?? (look === 'rest-nap' ? ICONS.resting : `<span class="emo">${ACTS[look.slice(5)]?.emoji || '☕'}</span>`));
 
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+const HOP = 0.9; // how far out a bot hops up onto (or down off) a seat
 const lerpAngle = (a, b, k) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * k;
+const FACE_CAMERA = Math.PI / 4; // the camera looks in from +x +z
 
-// Walk out to the aisle, along it to the free column, then in to the target.
-function route(from, to, lanes) {
-  const lane = (p) => (p.x >= LANE_X - 0.01 ? null : lanes.reduce((a, b) => (Math.abs(b - p.z) < Math.abs(a - p.z) ? b : a)));
-  const lf = lane(from), lt = lane(to);
-  const pts = [];
-  const same = lf !== null && lf === lt;
-  if (lf !== null) {
-    pts.push(V(from.x, 0, lf));
-    if (!same) pts.push(V(LANE_X, 0, lf));
+const ringGeo = new THREE.RingGeometry(0.95, 1.3, 40).rotateX(-Math.PI / 2);
+const alertMat = {
+  waiting: new THREE.MeshBasicMaterial({ color: 0xf5b544, transparent: true, opacity: 0.85, depthWrite: false }),
+  error: new THREE.MeshBasicMaterial({ color: 0xff4d4d, transparent: true, opacity: 0.85, depthWrite: false }),
+};
+
+// ---- poses -------------------------------------------------------------------------
+// Everything a bot's body does, from where it is and what it is up to. Hand and foot
+// targets are in the bot's own space: origin under it on whatever it stands or sits
+// on, facing +z (its desk or whatever it plays with is in front).
+const SH = 0.44; // hips to shoulders
+const surface = (y) => (y >= 0.8 ? 'chair' : y >= 0.6 ? 'sofa' : y >= 0.35 ? 'bag' : 'floor');
+const hang = (s) => ({ a: [0.05, s * 0.12, 0.25] });
+const both = (P, L) => { P.aL = L; P.aR = mirror(L); };
+const bothLegs = (P, L) => { P.lL = L; P.lR = mirror(L); };
+const tgt = (x, y, z, px, py, pz) => ({ t: vec(x, y, z), p: vec(px, py, pz) });
+// a point fixed to the chest, in body space, for the current lean
+const chest = (P, x, y, z) => { const c = Math.cos(P.sp || 0), s = Math.sin(P.sp || 0); return vec(x, P.hy + y * c - z * s, P.hz + y * s + z * c); };
+
+function sit(P, kind, ph) {
+  if (kind === 'chair') {
+    P.hy = 0.13; P.hz = 0.14;
+    const sw = 0.05 * Math.sin(ph * 2);
+    P.lL = tgt(0.15, -0.28, P.hz + 0.3 + sw, 0, 0.4, 1);
+    P.lR = tgt(-0.15, -0.28, P.hz + 0.3 - sw, 0, 0.4, 1);
+  } else if (kind === 'sofa') {
+    P.hy = 0.13; P.hz = 0;
+    P.lL = { a: [-1.47, 0.07, 0.1] };
+    P.lR = { a: [-1.4, -0.07, 0.22] };
+  } else {
+    P.hy = 0.2; P.hz = 0.05;
+    P.lL = tgt(0.22, 0.2, 0.55, 0.5, 1, 0.5);
+    P.lR = tgt(-0.22, 0.2, 0.55, -0.5, 1, 0.5);
   }
-  if (lt !== null) {
-    if (!same) pts.push(V(LANE_X, 0, lt));
-    pts.push(V(to.x, 0, lt));
-  }
-  pts.push(to.clone());
-  return pts.filter((p, i) => i === 0 ? p.distanceTo(from) > 0.01 : p.distanceTo(pts[i - 1]) > 0.01);
 }
+const lap = (P) => both(P, tgt(0.15, P.hy + 0.1, P.hz + 0.3, 1, -0.3, -0.3));
+
+function posture(bot, c) {
+  const { t, ph, s, act, sp } = c;
+  const ch = bot.chibi;
+  const P = { hy: HIPS, hz: 0, aL: hang(1), aR: hang(-1), lL: { a: [0, 0.03, 0.04] }, lR: { a: [0, -0.03, 0.04] }, eye: 1, prop: null };
+  const mouth = (x) => vec(x, P.hy + NECK + 0.06, P.hz + ch.headFront * 0.75 + 0.07);
+  const neckZ = () => P.hz + Math.sin(P.sp || 0) * NECK;
+
+  if (c.party) {
+    // done: a spinning cheer
+    const p = 1 - c.celebrate / 1.1;
+    P.y = Math.sin(Math.PI * Math.min(1, p * 1.25)) * 0.9;
+    P.yaw = Math.PI * 2 * (p < 0.5 ? 2 * p * p : 1 - (-2 * p + 2) ** 2 / 2);
+    both(P, tgt(0.34, HIPS + SH + 0.42, 0.1 + 0.08 * Math.sin(t * 16), 1, -0.4, 0));
+    bothLegs(P, { a: [-0.45, 0.06, 0.9 * Math.sin(Math.PI * Math.min(1, p * 1.25))] });
+    return P;
+  }
+  if (c.moving) {
+    if (c.climb) {
+      // hopping up onto (or down off) a seat
+      bothLegs(P, { a: [-0.9, 0.05, 1.3] });
+      both(P, { a: [-0.6, 0.6, 0.4] });
+      return P;
+    }
+    const w = (c.walk * Math.PI) / 0.9, sw = Math.sin(w), cw = Math.cos(w);
+    P.y = 0.07 * Math.abs(cw);
+    P.lL = { a: [-0.55 * sw, 0.03, 0.15 + 0.6 * Math.max(0, cw)] };
+    P.lR = { a: [0.55 * sw, -0.03, 0.15 + 0.6 * Math.max(0, -cw)] };
+    P.aL = { a: [0.55 * sw, 0.1, 0.45] };
+    P.aR = { a: [-0.55 * sw, -0.1, 0.45] };
+    P.syaw = 0.12 * sw;
+    P.sp = 0.06;
+    return P;
+  }
+
+  if (c.atSeat) {
+    const seat = c.seat, standing = seat.type === 'standing';
+    const y0 = seat.pos.y;
+    if (s === 'working') {
+      // typing: sitting up to the desk, hands on the keyboard
+      if (standing) { P.hz = seat.reach.z - 0.58; P.sp = 0.08; }
+      else { sit(P, 'chair', ph); P.hz = Math.min(0.3, Math.max(0.05, seat.reach.z - 0.7)); P.sp = 0.16; }
+      for (const sd of [1, -1]) {
+        const tap = 0.04 * Math.max(0, Math.sin(t * 15 + (sd > 0 ? 0 : 2.1) + bot.phase));
+        P[sd > 0 ? 'aL' : 'aR'] = tgt(sd * 0.19, seat.reach.y - y0 + 0.05 + tap, seat.reach.z - 0.06, sd * 0.9, -0.6, -0.4);
+      }
+      P.hx = 0.1 + 0.04 * Math.sin(t * 2.2 + bot.phase);
+      P.sy = 1 + 0.015 * Math.sin(t * 7 + bot.phase);
+      if (!standing) { P.lL.t.z = P.hz + 0.3; P.lR.t.z = P.hz + 0.3; }
+      return P;
+    }
+    if (s === 'waiting') {
+      // needs you: up on its chair, bouncing and waving
+      const k = Math.sin(t * 4.2 + bot.phase);
+      P.y = Math.max(0, k) * 0.42;
+      P.sy = 1 + (k < 0 ? 0.05 * k : 0.03 * k);
+      P.aR = tgt(-0.62 + 0.1 * Math.sin(t * 10), HIPS + SH + 0.3, 0.16, -1, -0.6, 0);
+      P.aL = tgt(0.37, HIPS + 0.12, 0.04, 1, 0.1, -0.5);
+      bothLegs(P, { a: [-0.15 * Math.max(0, k), 0.05, 0.3 * Math.max(0, k)] });
+      P.hr = 0.12 * Math.sin(t * 2.1);
+      return P;
+    }
+    if (s === 'error') {
+      // stuck: hands on its head, shaking
+      const on = Math.sin(t * 1.3 + bot.phase) > 0 ? 1 : 0.15;
+      P.rz = Math.sin(t * 16) * 0.08 * on;
+      P.hyaw = Math.sin(t * 13) * 0.3 * on;
+      both(P, tgt(Math.min(ch.headHalf, 0.55) + 0.05, HIPS + NECK + 0.22, 0.04, 1, -0.6, 0));
+      bothLegs(P, { a: [-0.1, 0.12, 0.2] });
+      return P;
+    }
+    // finished or idle at the desk
+    if (!standing) { sit(P, 'chair', ph); lap(P); P.sp = -0.05; }
+    P.sy = 1 + 0.02 * Math.sin(t * 1.5 + bot.phase);
+    return P;
+  }
+
+  if (!act) { P.sy = 1 + 0.02 * Math.sin(ph * 1.5); return P; }
+  const kind = surface(sp.pos.y);
+  const side = c.side ? -1 : 1;
+  switch (act) {
+    case 'nap':
+      if (sp.lie) {
+        // stretched out along the sofa on its back
+        P.yaw = sp.lie * Math.PI / 2;
+        P.rx = -Math.PI / 2;
+        P.pz = 1.3;
+        P.px = -sp.lie * 0.08;
+        P.y = Math.max(ch.headDepth / 2, 0.27) + 0.01;
+        P.lL = { a: [-0.5, 0.06, 0.9] };
+        P.lR = { a: [-0.05, -0.05, 0.15] };
+        both(P, tgt(0.12, HIPS + 0.26, 0.3 + 0.015 * Math.sin(t * 1.3 + bot.phase), 1, 0, 0));
+        P.sp = 0.03 * Math.sin(t * 1.3 + bot.phase);
+      } else {
+        // dozing off in the armchair
+        sit(P, 'sofa', ph);
+        P.sp = -0.42;
+        P.hr = 0.22 + 0.1 * Math.sin(t * 0.55 + bot.phase);
+        P.hx = 0.15;
+        both(P, tgt(0.16, P.hy + 0.12, P.hz + 0.2, 1, -0.3, -0.3));
+        P.sy = 1 + 0.03 * Math.sin(t * 1.3 + bot.phase);
+      }
+      P.eye = 0.08;
+      break;
+    case 'relax':
+      sit(P, kind, ph);
+      P.sp = -0.25;
+      both(P, tgt(0.28, P.hy + NECK * 0.97 + 0.2, P.hz - 0.27, 1, 0.5, 0));
+      P.hyaw = 0.35 * Math.sin(ph * 0.3);
+      P.hr = 0.08 * Math.sin(ph * 0.6);
+      if (kind === 'sofa') P.lR = { a: [-1.25, -0.25, 0.55] }; // one leg crossed over
+      break;
+    case 'game':
+      if (kind === 'bag') {
+        sit(P, 'bag', ph);
+        P.sp = 0.14 + 0.04 * Math.sin(ph * 1.3);
+        P.sr = 0.07 * Math.sin(ph * 2.1);
+        const cp = chest(P, 0, 0.27, 0.38);
+        for (const sd of [1, -1]) {
+          const j = 0.025 * Math.sin(ph * 23 + sd);
+          P[sd > 0 ? 'aL' : 'aR'] = tgt(sd * 0.15, cp.y + j, cp.z - 0.01, sd, -0.6, -0.2);
+        }
+        P.prop = 'controller';
+        P.hx = 0.12;
+      } else {
+        // at the arcade cabinet, mashing buttons
+        P.hz = 0.3; P.sp = 0.1;
+        for (const sd of [1, -1]) P[sd > 0 ? 'aL' : 'aR'] = tgt(sd * 0.17, 1.33 + 0.05 * Math.max(0, Math.sin(ph * 17 + sd * 1.7)), 0.86, sd, -0.6, -0.3);
+        P.syaw = 0.12 * Math.sin(ph * 2.3);
+        P.y = Math.abs(Math.sin(ph * 6.5)) * 0.04;
+      }
+      break;
+    case 'foosball':
+      P.hz = 0.35; P.hy = HIPS - 0.04; P.sp = 0.2;
+      bothLegs(P, { a: [-0.2, 0.1, 0.35] });
+      for (const sd of [1, -1]) P[sd > 0 ? 'aL' : 'aR'] = tgt(sd * 0.3, 1.37, 0.8 + 0.07 * Math.sin(ph * 7 + (sd > 0 ? 0 : Math.PI)), sd, -0.5, -0.3);
+      P.yaw = 0.12 * Math.sin(ph * 7);
+      P.lateral = 0.25 * Math.sin(ph * 1.7);
+      break;
+    case 'run': {
+      const w = ph * 10, sw = Math.sin(w), cw = Math.cos(w);
+      P.y = Math.abs(cw) * 0.16;
+      P.sp = 0.16;
+      P.lL = { a: [-0.95 * sw, 0.03, 0.35 + 1.0 * Math.max(0, cw)] };
+      P.lR = { a: [0.95 * sw, -0.03, 0.35 + 1.0 * Math.max(0, -cw)] };
+      P.aL = { a: [0.85 * sw, 0.12, 1.55] };
+      P.aR = { a: [-0.85 * sw, -0.12, 1.55] };
+      P.syaw = 0.15 * sw;
+      break;
+    }
+    case 'pingpong': {
+      const k = t * 4.4 + (c.side ? Math.PI : 0);
+      P.hy = HIPS - 0.06; P.sp = 0.15;
+      bothLegs(P, { a: [-0.25, 0.16, 0.45] });
+      P.aR = tgt(-0.3 + 0.3 * Math.sin(k), HIPS + 0.48, 0.45 + 0.12 * Math.cos(k), -1, -0.4, -0.3);
+      P.aL = { a: [-0.3, 0.6, 0.7] };
+      P.prop = 'paddle';
+      P.lateral = 0.5 * Math.sin(t * 2.2 + (c.side ? Math.PI : 0));
+      P.y = Math.abs(Math.sin(t * 4.4)) * 0.1;
+      break;
+    }
+    case 'hoops': {
+      const cc = (ph % 2.6) / 2.6;
+      P.act = 'hoops'; P.c = cc;
+      if (cc < 0.18) {
+        const d = Math.sin((cc / 0.18) * Math.PI);
+        P.hy = HIPS - 0.14 * d;
+        bothLegs(P, { a: [-0.45 * d, 0.08, 0.9 * d] });
+        both(P, tgt(0.15, P.hy + 0.55, 0.36, 1, -0.6, -0.2));
+      } else if (cc < 0.45) {
+        const u = (cc - 0.18) / 0.27;
+        P.y = Math.sin(u * Math.PI) * 0.9;
+        both(P, tgt(0.13, HIPS + SH + 0.45, 0.22, 1, -0.3, -0.4));
+        bothLegs(P, { a: [-0.1, 0.05, 0.25] });
+      } else if (cc < 0.7) both(P, tgt(0.16, HIPS + SH + 0.38, 0.3, 1, -0.3, -0.4));
+      P.hx = -0.15;
+      break;
+    }
+    case 'yoga': {
+      P.eye = 0.1;
+      if (Math.sin(ph * 0.35) > 0) {
+        // tree: one foot on the other knee, hands together overhead
+        P.lL = tgt(0.03, 0.36, 0.04, 1, 0, 0.25);
+        P.lR = { a: [0, -0.02, 0] };
+        both(P, tgt(0.06, HIPS + SH + 0.46, 0.05, 1, 0, 0));
+        P.rz = 0.03 * Math.sin(ph * 0.9);
+      } else {
+        // star: arms and legs out wide
+        both(P, { a: [0, 1.5, 0.05] });
+        bothLegs(P, { a: [0, 0.32, 0] });
+        P.y = -0.03;
+      }
+      break;
+    }
+    case 'eat':
+    case 'chat':
+      if (kind === 'chair') sit(P, 'chair', ph);
+      if (act === 'eat') {
+        P.prop = 'bowl';
+        const bowl = chest(P, 0.04, 0.22, 0.42);
+        P.aL = tgt(0.12, bowl.y, bowl.z - 0.02, 1, -0.6, -0.3);
+        const bite = Math.sin(ph * 0.8) > 0 && Math.sin(ph * 5) > -0.2;
+        P.aR = bite ? { t: mouth(-0.05), p: vec(-1, -0.5, -0.2) } : tgt(-0.08, bowl.y + 0.06, bowl.z, -1, -0.6, -0.3);
+        P.hx = bite ? -0.05 : 0.15;
+      } else {
+        P.aL = tgt(0.28 + 0.06 * Math.sin(ph * 3), P.hy + 0.3 + 0.1 * Math.sin(ph * 2.3), P.hz + 0.3, 1, -0.6, -0.2);
+        P.aR = tgt(-0.28 - 0.06 * Math.sin(ph * 2.6 + 1), P.hy + 0.26 + 0.12 * Math.sin(ph * 2.9 + 1), P.hz + 0.32, -1, -0.6, -0.2);
+        P.hx = 0.08 * Math.sin(ph * 4);
+        P.yaw = 0.25 * Math.sin(ph * 0.9);
+        P.y = kind === 'chair' ? 0 : Math.max(0, Math.sin(ph * 4)) * 0.05;
+      }
+      break;
+    case 'coffee':
+    case 'snack': {
+      const cyc = (ph % 5) / 5, sip = cyc > 0.68;
+      P.prop = act === 'coffee' ? 'cup' : 'donut';
+      P.aR = sip ? { t: mouth(-0.04), p: vec(-1, -0.5, -0.2) } : tgt(-0.15, HIPS + 0.3, 0.34, -1, -0.5, -0.3);
+      P.hx = sip ? -0.18 : 0.04;
+      P.sy = 1 + 0.02 * Math.sin(ph * 1.5);
+      P.lL = { a: [0, 0.04, 0.04] }; P.lR = { a: [-0.08, -0.03, 0.18] };
+      break;
+    }
+    default:
+      P.sy = 1 + 0.02 * Math.sin(ph * 1.5);
+  }
+  return P;
+}
+
+// Confetti when a bot finishes something: little stars from one instanced mesh per floor.
+const BURST = 36, POOL = BURST * 5, LIFE = 1.5;
+const starShape = new THREE.Shape();
+for (let i = 0; i < 10; i++) { const a = Math.PI / 2 + (i * Math.PI) / 5, r = i % 2 ? 0.045 : 0.11; starShape[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r); }
+const starGeo = new THREE.ShapeGeometry(starShape);
+const confettiMat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide, toneMapped: false });
+const CONFETTI = [0xff4d6d, 0xffc300, 0x3ddc97, 0x4cc9f0, 0xb388ff, 0xff8fab, 0xffffff].map((c) => new THREE.Color(c));
+const _m4 = new THREE.Matrix4(), _q4 = new THREE.Quaternion(), _e4 = new THREE.Euler(), _s4 = new THREE.Vector3();
+
+// Mood bubbles: now and then a small emoji pops above a bot's head.
+const MOODS = { nap: ['💤'], eat: ['😋'], snack: ['😋'], coffee: ['☕', '❤️'], game: ['🎵', '❤️'], relax: ['🎵', '❤️', '💤'] };
+const MOOD_FOR = 2.4; // seconds a mood bubble stays up
+const pickMood = (s, act) => {
+  const list = s === 'working' ? ['💡', '⌨️', '☕'] : MOODS[act] || ['❤️', '🎵'];
+  return list[Math.floor(Math.random() * list.length)];
+};
 
 export class BotLayer {
   constructor(building) {
@@ -216,8 +536,9 @@ export class BotLayer {
     this.selected = null;
     this.hovered = null;
     this.focus = null;
+    this.spread = false; // every floor side by side
     this.gloss = true;
-    this.wanders = true; // bots on a break stroll between spots (off for scripted recordings)
+    this.wanders = true; // bots on a break stroll between zones (off for scripted recordings)
     this.ring = new THREE.Mesh(new THREE.RingGeometry(0.95, 1.12, 56), new THREE.MeshBasicMaterial({ color: 0x5fd38a, transparent: true, opacity: 0.9, depthWrite: false }));
     this.ring.rotation.x = -Math.PI / 2;
     this.ring.visible = false;
@@ -227,6 +548,7 @@ export class BotLayer {
     for (const [id, bot] of this.bots) {
       const rec = state.bots.get(id);
       if (!rec || rec.shape !== bot.shape || rec.color !== bot.color) {
+        if (bot.codexFloor) bot.codexFloor.codexOwners[bot.codexIndex] = null;
         bot.dispose();
         this.bots.delete(id);
       }
@@ -239,6 +561,22 @@ export class BotLayer {
     for (const [team, recs] of byTeam) {
       const floor = this.building.floor(team);
       if (!floor) continue;
+      floor.setCodexBoard({ ...state.codex, top: (state.codex?.top || []).map((x) => ({ ...x, color: state.bots.get(x.bot)?.color })) });
+      if (!floor.codexRobots) {
+        floor.codexRobots = floor.codexDesks.map((desk, i) => {
+          const c = new Bot({ id: `codex-${i}`, name: 'Codex', shape: 'cube', color: '#171d24' }, this.gloss);
+          floor.inner.add(c.root); c.root.position.copy(desk.robotPos); c.root.rotation.y = desk.face;
+          c.label.visible = false;
+          const seat = { pos: desk.robotPos, type: 'chair', reach: V(0, 1.35, 1) };
+          c.chibi.apply(posture(c, { t: 0, ph: 0, dt: 0, s: 'resting', atSeat: true, seat, moving: false, party: false, climb: 0, walk: 0 }), 1);
+          const band = new THREE.Mesh(codexBandGeo, codexHeadMat); band.position.y = 0.75; c.chibi.head.add(band);
+          for (const side of [-1, 1]) { const cup = new THREE.Mesh(codexCupGeo, codexHeadMat); cup.rotation.z = Math.PI / 2; cup.position.set(side * 0.66, 0.75, 0); c.chibi.head.add(cup); }
+          const el = document.createElement('div'); el.className = 'mood'; el.innerHTML = '<span style="display:block;font-size:17px;line-height:1;padding:4px 6px;border-radius:999px;background:rgba(255,255,255,.92)">⏳</span>';
+          c.codexBubble = new CSS2DObject(el); c.codexBubble.position.set(0.55, c.height + 0.25, 0); c.root.add(c.codexBubble); c.codexBubble.visible = false;
+          return c;
+        });
+      }
+      const plates = [];
       recs.forEach((rec, i) => {
         let bot = this.bots.get(rec.id);
         const fresh = !bot;
@@ -252,50 +590,84 @@ export class BotLayer {
           floor.inner.add(bot.root);
           bot.floor = floor;
           bot.spot = null;
+          bot.exit = null;
+          bot.path = [];
           bot.key = '';
           bot.placed = !fresh || instant ? false : 'spawn';
         }
-        if (bot.seat && bot.seat !== floor.seats[i % floor.seats.length]) bot.seat.display.material.emissive.set(0);
-        bot.seat = floor.seats[i % floor.seats.length];
+        // every bot has its own desk (floors are sized so there is always one)
+        const seat = floor.seats[i % floor.seats.length];
+        plates[i % floor.seats.length] = { id: rec.id, name: rec.name, color: rec.color };
+        if (bot.seat && bot.seat !== seat) {
+          bot.seat.display.material.emissive.set(0);
+          if (bot.key === 'seat') bot.key = 'reseat';
+        }
+        bot.seat = seat;
         if (rec.doneAt && rec.doneAt !== bot.seenDone) {
           bot.seenDone = rec.doneAt;
-          if (!instant && bot.placed === true) { bot.celebrate = 1.1; bot.doneShow = 2.2; }
+          if (!instant && bot.placed === true) { bot.celebrate = 1.1; bot.doneShow = 2.2; this.burst(bot); }
+        }
+        if (bot.codexFloor && (bot.codexFloor !== floor || !rec.codex || rec.state === 'waiting' || rec.state === 'error')) {
+          bot.codexFloor.codexOwners[bot.codexIndex] = null; bot.codexFloor = null; bot.codexIndex = null; bot.errand = null; bot.key = '';
         }
         this.retarget(bot, instant);
       });
+      floor.setPlates(plates);
     }
+  }
+
+  // bots standing about on open floor, for walkers to go round
+  standing(floor, except) {
+    const out = [];
+    for (const b of this.bots.values()) {
+      if (b === except || b.floor !== floor || b.path.length) continue;
+      if (floor.nav.free(b.pos.x, b.pos.z)) out.push(b.pos);
+    }
+    return out;
+  }
+
+  go(bot, to, approach) {
+    const f = bot.floor;
+    bot.path = f.route(bot.pos, to, approach, bot.path.length ? null : bot.exit, this.standing(f, bot));
+    bot.exit = approach;
   }
 
   retarget(bot, instant) {
     const s = bot.rec.state, seat = bot.seat, f = bot.floor;
-    let to, face, key;
-    if (s === 'resting') {
-      if (bot.spot == null || f.rest[bot.spot]?.taken !== bot.id) bot.spot = f.claimRest(bot.id);
-      const sp = f.rest[bot.spot];
-      to = sp.pos; face = sp.face; key = `rest${bot.spot}`;
-    } else {
+    let to, face, key, approach;
+    if (bot.errand === 'supervise' || bot.errand === 'pickup' || bot.errand === 'queue') {
       if (bot.spot != null) { f.releaseRest(bot.id); bot.spot = null; }
-      if (s === 'waiting') { to = V(seat.pos.x, 0, seat.lane); face = Math.PI / 4; key = 'stand'; }
-      else { to = seat.pos; face = seat.face; key = 'seat'; }
+      const sp = bot.errand === 'queue' ? f.codexQueue[bot.queueIndex % 3] : f.codexDesks[bot.codexIndex].superviseSpot;
+      to = sp.pos; face = sp.face; key = bot.errand === 'queue' ? `queue${bot.queueIndex % 3}` : `codex${bot.codexIndex}`; approach = null;
+    } else if (s === 'resting' && !bot.errand) {
+      if (bot.spot == null || f.rest[bot.spot]?.taken !== bot.id) bot.spot = f.claimRest(bot.id, bot.lastZone);
+      const sp = f.rest[bot.spot];
+      to = sp.pos; face = sp.face; key = `rest${bot.spot}`; approach = sp.approach;
+    } else {
+      if (bot.spot != null) { bot.lastZone = f.rest[bot.spot]?.zone; f.releaseRest(bot.id); bot.spot = null; }
+      // needing you or stuck: at the desk, turned to face you
+      to = seat.pos; approach = seat.approach; key = 'seat';
+      face = s === 'waiting' || s === 'error' ? FACE_CAMERA : seat.face;
     }
-    seat.display.material.emissive.set(s === 'working' ? bot.color : 0x000000);
-    seat.display.material.emissiveIntensity = 0.7;
+    seat.display.material.emissive.set(s === 'working' ? bot.color : s === 'waiting' ? 0xf5b544 : s === 'error' ? 0xff4d4d : 0x000000);
+    seat.display.material.emissiveIntensity = s === 'working' ? 0.7 : 0.45;
     bot.face = face;
     if (key === bot.key) return;
     bot.key = key;
     if (bot.placed === 'spawn') {
       bot.pos.copy(f.spawn);
-      bot.rotY = Math.PI / 2;
-      const out = V(f.spawn.x + 2.4, 0, f.spawn.z);
-      bot.path = [out, ...route(out, to, f.lanes)];
+      bot.rotY = Math.PI;
+      bot.path = [f.spawnOut.clone(), ...f.route(f.spawnOut, to, approach, null, this.standing(f, bot))];
+      bot.exit = approach;
       bot.placed = true;
     } else if (instant || !bot.placed) {
       bot.pos.copy(to);
       bot.path = [];
       bot.rotY = face;
+      bot.exit = approach;
       bot.placed = true;
     } else {
-      bot.path = route(bot.pos, to, f.lanes);
+      this.go(bot, to, approach);
     }
   }
 
@@ -306,7 +678,7 @@ export class BotLayer {
 
   pickables() {
     const out = [];
-    for (const b of this.bots.values()) if (shown(b.floor)) out.push(b.body);
+    for (const b of this.bots.values()) if (shown(b.floor)) out.push(b.body, b.limbs);
     return out;
   }
 
@@ -314,67 +686,159 @@ export class BotLayer {
     return this.bots.get(id);
   }
 
+  // where a bot is and what it is up to, for the side card
+  activityOf(id) {
+    const b = this.bots.get(id);
+    if (!b || !b.floor) return null;
+    if (b.rec.state !== 'resting' || b.spot == null) return { zone: 'desk', label: b.path.length ? 'Heading back to the desk' : 'At the desk' };
+    const sp = b.floor.rest[b.spot];
+    if (!sp) return null;
+    return { zone: sp.zone, act: sp.act, label: b.path.length ? `Heading to the ${ZONES[sp.zone].toLowerCase()}` : ACTS[sp.act].label };
+  }
+
+  // how many bots of a team are where
+  places(team) {
+    const out = { desk: 0, cafe: 0, gym: 0, lounge: 0 };
+    for (const b of this.bots.values()) {
+      if (b.floor?.team !== team) continue;
+      const sp = b.rec.state === 'resting' && b.spot != null ? b.floor.rest[b.spot] : null;
+      out[sp ? sp.zone : 'desk']++;
+    }
+    return out;
+  }
+
   update(dt, t) {
+    const floors = new Set();
+    // Claim a stable preferred desk, then probe for the next free robot.
+    for (const bot of this.bots.values()) {
+      const f = bot.floor, cs = bot.rec.codex?.state;
+      if (!f || !f.codexRobots) continue;
+      f.codexOwners ||= Array(8).fill(null);
+      if (bot.codexFloor && (bot.codexFloor !== f || !cs || bot.rec.state === 'waiting' || bot.rec.state === 'error')) {
+        bot.codexFloor.codexOwners[bot.codexIndex] = null; bot.codexFloor = null; bot.codexIndex = null; bot.errand = null; bot.key = '';
+        this.retarget(bot, false);
+      }
+      if (cs === 'running') bot.codexCompleted = null;
+      if ((!cs || bot.rec.state === 'waiting' || bot.rec.state === 'error') && bot.errand === 'queue') { bot.errand = null; bot.key = ''; this.retarget(bot, false); }
+      if ((cs !== 'running' && cs !== 'done') || bot.rec.state === 'waiting' || bot.rec.state === 'error' || bot.codexCompleted === `${cs}:${bot.rec.codex?.at}`) continue;
+      if (bot.codexIndex == null && bot.errand !== 'return-done') {
+        let hash = 0; for (const ch of String(bot.id)) hash = (Math.imul(hash, 31) + ch.charCodeAt(0)) >>> 0;
+        let index = -1; for (let n = 0; n < 8; n++) { const i = (hash + n) % 8; if (!f.codexOwners[i]) { index = i; break; } }
+        if (index >= 0) { f.codexOwners[index] = bot; bot.codexFloor = f; bot.codexIndex = index; bot.errand = cs === 'done' ? 'pickup' : 'supervise'; bot.errandWait = 0; bot.key = ''; this.retarget(bot, false); }
+        else if (bot.errand !== 'queue') { bot.queueIndex = [...this.bots.values()].filter((b) => b.floor === f && b.errand === 'queue').length; bot.errand = 'queue'; bot.key = ''; this.retarget(bot, false); }
+      } else if (bot.codexIndex != null && cs === 'done' && bot.errand === 'supervise') { bot.errand = 'pickup'; bot.errandWait = 0; }
+    }
     for (const bot of this.bots.values()) {
       if (!bot.floor) continue;
+      floors.add(bot.floor);
+      const f = bot.floor;
       const s = bot.rec.state;
+      if (bot.errand === 'pickup' && !bot.path.length && bot.key.startsWith('codex')) {
+        bot.errandWait += dt;
+        if (bot.errandWait >= 1.5) {
+          f.codexOwners[bot.codexIndex] = null; bot.codexFloor = null; bot.codexIndex = null;
+          bot.codexCompleted = `done:${bot.rec.codex?.at}`; bot.errand = 'return-done'; bot.doneShow = 1.5; this.burst(bot); bot.key = ''; this.retarget(bot, false);
+        }
+      } else if (bot.errand === 'return-done' && !bot.path.length && bot.key === 'seat') { bot.errand = null; }
+      if (bot.errand === 'pickup' && !bot.errandCard) { bot.errandCard = new THREE.Mesh(cardGeo, cardMat); f.inner.add(bot.errandCard); }
+      if (bot.errandCard) {
+        bot.errandCard.visible = bot.errand === 'return-done' || (bot.errand === 'pickup' && !bot.path.length && bot.key.startsWith('codex'));
+        if (bot.errandCard.visible && bot.errand === 'return-done') { bot.errandCard.position.copy(bot.pos).add(V(Math.sin(bot.rotY) * 0.5, 1.25, Math.cos(bot.rotY) * 0.5)); bot.errandCard.rotation.set(-0.3, bot.rotY, 0); }
+        else if (bot.errandCard.visible) {
+          const printer = f.codexDesks[bot.codexIndex].printerPos;
+          const printed = printer.clone().add(V(0, 0, 0.4)), visitor = bot.pos.clone().add(V(0, 1.3, 0));
+          if (bot.errandWait < 0.6) bot.errandCard.position.lerpVectors(printer, printed, bot.errandWait / 0.6);
+          else bot.errandCard.position.lerpVectors(printed, visitor, Math.min(1, (bot.errandWait - 0.6) / 0.8));
+          bot.errandCard.rotation.set(-0.3, 0, 0);
+        }
+      }
       // finished a task: a little spin-jump on the spot before heading off
       const party = bot.celebrate > 0;
       if (party) bot.celebrate -= dt;
       bot.doneShow -= dt;
-      if (this.wanders && s === 'resting' && !bot.path.length && !party && (bot.wander -= dt) < 0) {
-        bot.wander = 7 + Math.random() * 9;
-        const i = bot.floor.moveRest(bot.id);
-        if (i >= 0 && i !== bot.spot) {
-          const sp = bot.floor.rest[i];
+      const sp = s === 'resting' && !bot.errand && bot.spot != null ? f.rest[bot.spot] : null;
+      if (this.wanders && sp && !bot.path.length && !party && (bot.wander -= dt) < 0) {
+        const i = f.moveRest(bot.id);
+        const next = f.rest[i];
+        const [a, b] = STAY[next.act] || [9, 10];
+        bot.wander = a + Math.random() * b;
+        if (i !== bot.spot) {
+          bot.lastZone = sp.zone;
           bot.spot = i;
           bot.key = `rest${i}`;
-          bot.face = sp.face;
-          bot.path = route(bot.pos, sp.pos, bot.floor.lanes);
+          bot.face = next.face;
+          this.go(bot, next.pos, next.approach);
         }
       }
       const moving = bot.path.length > 0 && !party;
       let hop = 0;
+      bot.climb = 0;
       if (moving) {
         const tgt = bot.path[0];
-        const d = tgt.clone().sub(bot.pos);
-        const len = d.length();
+        if (bot.legTo !== tgt) { bot.legTo = tgt; bot.legFrom = bot.pos.clone(); }
+        const A = bot.legFrom;
+        const dx = tgt.x - bot.pos.x, dz = tgt.z - bot.pos.z;
+        const len = Math.hypot(dx, dz);
         const step = SPEED * dt;
-        if (Math.hypot(d.x, d.z) > 0.01) bot.moveFace = Math.atan2(d.x, d.z);
+        if (len > 0.01) bot.moveFace = Math.atan2(dx, dz);
         if (len <= step) { bot.pos.copy(tgt); bot.path.shift(); }
-        else bot.pos.addScaledVector(d, step / len);
+        else {
+          bot.pos.x += (dx * step) / len;
+          bot.pos.z += (dz * step) / len;
+          // walk on the floor, then hop up onto a seat at the very end (or down off it
+          // at the start) instead of floating up a slope
+          const L = Math.hypot(tgt.x - A.x, tgt.z - A.z), done = L - len + step;
+          const up = tgt.y > A.y + 0.01, down = tgt.y < A.y - 0.01;
+          const u = up ? clamp01((done - (L - HOP)) / HOP) : down ? clamp01(done / HOP) : 1;
+          bot.pos.y = A.y + (tgt.y - A.y) * (up || down ? u : clamp01(done / Math.max(L, 0.001)));
+          if ((up || down) && u > 0 && u < 1) { hop = Math.sin(u * Math.PI) * 0.45; bot.climb = 1; }
+        }
         bot.walk += step;
-        hop = Math.abs(Math.sin((bot.walk * Math.PI) / 0.9)) * 0.22;
       }
-      bot.root.position.copy(bot.pos);
-      bot.rotY = lerpAngle(bot.rotY, moving ? bot.moveFace : bot.face, 1 - Math.exp(-dt * 10));
-      bot.root.rotation.y = bot.rotY;
+      const act = sp && !moving && !party ? sp.act : null;
 
-      let sy = 1, y = hop, rz = 0, eye = 1;
-      if (party) {
-        const p = 1 - bot.celebrate / 1.1;
-        y = Math.sin(Math.PI * Math.min(1, p * 1.25)) * 0.9;
-        bot.root.rotation.y = bot.rotY + Math.PI * 2 * (p < 0.5 ? 2 * p * p : 1 - (-2 * p + 2) ** 2 / 2);
-        sy = p < 0.12 ? 1 - p * 1.5 : 1;
-      } else if (moving) sy = 1 + 0.05 * Math.sin((bot.walk * Math.PI * 2) / 0.9);
-      else if (s === 'working') { const k = Math.sin(t * 7 + bot.phase); sy = 1 + 0.035 * k; y = 0.03 * Math.max(0, k); }
-      else if (s === 'waiting') { const k = Math.sin(t * 4.2 + bot.phase); y = Math.max(0, k) * 0.45; sy = 1 + (k < 0 ? 0.07 * k : 0.04 * k); }
-      else if (s === 'error') rz = Math.sin(t * 16) * 0.1 * (Math.sin(t * 1.3 + bot.phase) > 0 ? 1 : 0.15);
-      else {
-        // asleep: slow deep breaths, head lolling to one side, eyes shut
-        sy = 1 + 0.06 * Math.sin(t * 1.3 + bot.phase);
-        rz = 0.13 * Math.sin(t * 0.55 + bot.phase) + 0.06;
-        eye = 0.08;
+      // step aside for anyone close ahead (everybody keeps to the same side, so two
+      // bots meeting head-on pass each other instead of walking through)
+      const want = V(0, 0, 0);
+      if (moving) {
+        const mx = Math.sin(bot.moveFace), mz = Math.cos(bot.moveFace);
+        for (const o of this.bots.values()) {
+          if (o === bot || o.floor !== f) continue;
+          const dx = o.pos.x - bot.pos.x, dz = o.pos.z - bot.pos.z;
+          const dd = Math.hypot(dx, dz);
+          if (dd < 0.001 || dd > 2.1) continue;
+          if ((dx * mx + dz * mz) / dd < 0.15) continue;
+          const push = (2.1 - dd) / 2.1;
+          want.x += mz * push * 0.9;
+          want.z += -mx * push * 0.9;
+        }
+        if (want.length() > 0.9) want.setLength(0.9);
       }
-      bot.pivot.position.y = y;
+      bot.side.lerp(want, 1 - Math.exp(-dt * 5));
+
+      bot.rotY = lerpAngle(bot.rotY, moving ? bot.moveFace : bot.face, 1 - Math.exp(-dt * 10));
+      const ph = t + bot.phase;
+      const atSeat = !moving && bot.key === 'seat' && !sp;
+      const ctx = { t, ph, dt, s, act, sp, moving, party, atSeat, seat: bot.seat, climb: bot.climb, walk: bot.walk, side: bot.spot % 2, celebrate: bot.celebrate };
+      const P = posture(bot, ctx);
+      if (bot.errand === 'supervise' && !moving && Math.sin(t * 0.7 + bot.phase) > 0.75) P.aR = { a: [-1.1, -0.1, 0.2] };
+      bot.chibi.apply(P, P.snap ? 1 : 1 - Math.exp(-dt * 16));
+
+      bot.root.position.copy(bot.pos).add(bot.side);
+      if (P.lateral) bot.root.position.add(V(Math.cos(bot.rotY) * P.lateral, 0, -Math.sin(bot.rotY) * P.lateral));
+      bot.root.rotation.y = bot.rotY + (P.yaw || 0);
+      bot.pivot.position.set(P.px || 0, (P.y || 0) + hop, P.pz || 0);
+      const sy = P.sy || 1;
       bot.pivot.scale.set(1 / Math.sqrt(sy), sy, 1 / Math.sqrt(sy));
-      bot.pivot.rotation.z = rz;
+      bot.pivot.rotation.set(P.rx || 0, 0, P.rz || 0);
+      let eye = P.eye ?? 1;
+      if (P.act === 'hoops') this.shoot(f, bot, P.c);
 
       bot.blink -= dt;
       if (bot.blink < 0) { bot.blinkT = 0.13; bot.blink = 2.5 + Math.random() * 3.5; }
-      if (bot.blinkT > 0 && s !== 'resting') { bot.blinkT -= dt; eye = Math.min(eye, 0.12); }
+      if (bot.blinkT > 0 && eye > 0.5) { bot.blinkT -= dt; eye = Math.min(eye, 0.12); }
       for (const e of bot.eyes) e.scale.y = eye;
-      const dozing = s === 'resting' && !moving && !party;
+      const dozing = s === 'resting' && !moving && !party && act === 'nap';
       bot.snot.visible = dozing;
       if (dozing) {
         // swells on the breath in, and every few breaths grows big and pops
@@ -384,26 +848,204 @@ export class BotLayer {
         bot.snot.scale.setScalar(cycle > 3.92 ? 0.01 : (0.3 + 0.75 * breath) * big);
       }
 
-      const look = bot.doneShow > 0 ? 'done' : s;
+      // needs you / stuck: a pulsing ring on the floor round its desk
+      const alarm = (s === 'waiting' || s === 'error') && !moving;
+      if (alarm && !bot.alert) {
+        bot.alert = new THREE.Mesh(ringGeo, alertMat.waiting);
+        bot.alert.renderOrder = 2;
+        bot.root.add(bot.alert);
+      }
+      if (bot.alert) {
+        bot.alert.visible = alarm;
+        if (alarm) {
+          bot.alert.material = alertMat[s];
+          bot.alert.position.y = 0.04 - bot.pos.y;
+          bot.alert.scale.setScalar(1 + 0.18 * Math.sin(t * (s === 'error' ? 9 : 5) + bot.phase));
+        }
+      }
+
+      const look = bot.doneShow > 0 ? 'done' : s === 'resting' && sp ? `rest-${sp.act}` : s;
       if (bot.shownState !== look) {
-        bot.el.className = `bub is-${look}`;
-        bot.el.firstChild.innerHTML = ICONS[look];
+        bot.el.className = `bub is-${look.startsWith('rest-') ? 'resting' : look} ${look.startsWith('rest-') ? `act-${look.slice(5)}` : ''}`;
+        bot.el.firstChild.innerHTML = iconFor(look);
         bot.shownState = look;
       }
       const named = bot.id === this.selected || bot.id === this.hovered;
       bot.el.classList.toggle('named', named);
       bot.el.classList.toggle('is-selected', bot.id === this.selected);
-      // Bubbles on the floor in focus; from outside, only bots that need you (top floor).
-      const near = this.focus ? bot.floor.team === this.focus : bot.floor.number === this.building.count;
-      const say = this.focus ? true : look === 'waiting' || look === 'error';
-      bot.label.visible = shown(bot.floor) && (bot.id === this.selected || (near && (named || say)));
+      // Bubbles on the floor in focus; from outside, only bots that need you (top floor,
+      // or every floor when they are laid out side by side).
+      const near = this.spread || (this.focus ? f.team === this.focus : f.number === this.building.count);
+      const say = this.focus && !this.spread ? true : look === 'waiting' || look === 'error';
+      bot.label.visible = shown(f) && (bot.id === this.selected || (near && (named || say)));
+      this.mood(bot, dt, s, act, moving || party, shown(f) && near);
     }
+
+    for (const f of floors) {
+      if (!f.codexRobots) continue;
+      let anyBusy = false;
+      f.codexRobots.forEach((c, i) => {
+        const owner = f.codexOwners?.[i], busy = !!(owner && owner.errand === 'supervise' && !owner.path.length && owner.key === `codex${i}` && owner.rec.codex?.state === 'running');
+        f.codexDesks[i].screen.material = busy ? f.codexBusyMaterial : f.codexIdleMaterial;
+        c.codexBubble.visible = busy && shown(f);
+        if (!shown(f)) return;
+        if (busy) {
+          anyBusy = true;
+          const ct = t * 1.8, seat = { pos: f.codexDesks[i].robotPos, type: 'chair', reach: V(0, 1.35, 1) };
+          c.chibi.apply(posture(c, { t: ct, ph: ct, dt, s: 'working', atSeat: true, seat, moving: false, party: false, climb: 0, walk: 0 }), 1 - Math.exp(-dt * 16));
+        } else {
+          if (c.wasBusy) { const seat = { pos: f.codexDesks[i].robotPos, type: 'chair', reach: V(0, 1.35, 1) }; c.chibi.apply(posture(c, { t, ph: t, dt, s: 'resting', atSeat: true, seat, moving: false, party: false, climb: 0, walk: 0 }), 1); }
+          c.pivot.rotation.z = Math.sin(t * 0.6 + i) * 0.025;
+        }
+        c.wasBusy = busy;
+      });
+      if (anyBusy) f.codexTexture.offset.y -= dt * 0.08;
+    }
+
+    alertMat.waiting.opacity = 0.55 + 0.35 * Math.sin(t * 5);
+    alertMat.error.opacity = 0.55 + 0.4 * Math.sin(t * 9);
+    for (const f of floors) if (shown(f)) this.floorFx(f, t);
+    this.confetti(dt);
 
     const sel = this.selected && this.bots.get(this.selected);
     this.ring.visible = !!(sel && shown(sel.floor));
     if (this.ring.visible) {
       if (this.ring.parent !== sel.floor.inner) sel.floor.inner.add(this.ring);
-      this.ring.position.set(sel.pos.x, 0.03, sel.pos.z);
+      this.ring.position.set(sel.root.position.x, 0.03, sel.root.position.z);
     }
+  }
+
+  // a burst of star confetti over a bot's head (pooled per floor)
+  burst(bot) {
+    const f = bot.floor;
+    if (!f) return;
+    if (!f.confetti) {
+      const mesh = new THREE.InstancedMesh(starGeo, confettiMat, POOL);
+      mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      mesh.frustumCulled = false;
+      mesh.userData.keep = true;
+      for (let i = 0; i < POOL; i++) { mesh.setColorAt(i, CONFETTI[i % CONFETTI.length]); mesh.setMatrixAt(i, _m4.makeScale(0, 0, 0)); }
+      f.inner.add(mesh);
+      f.confetti = { mesh, next: 0, parts: Array.from({ length: POOL }, () => ({ age: LIFE, p: V(0, 0, 0), v: V(0, 0, 0), r: V(0, 0, 0), w: V(0, 0, 0) })) };
+      (this.confettiFloors ||= new Set()).add(f);
+    }
+    const c = f.confetti, top = bot.pos.clone().add(bot.side);
+    top.y += bot.height + 0.35;
+    for (let k = 0; k < BURST; k++) {
+      const q = c.parts[c.next];
+      c.next = (c.next + 1) % POOL;
+      const a = Math.random() * Math.PI * 2, out = 1 + Math.random() * 2.2;
+      q.age = 0;
+      q.p.copy(top);
+      q.v.set(Math.cos(a) * out, 3 + Math.random() * 3, Math.sin(a) * out);
+      q.r.set(Math.random() * 6, Math.random() * 6, Math.random() * 6);
+      q.w.set((Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14, (Math.random() - 0.5) * 14);
+    }
+  }
+
+  confetti(dt) {
+    if (!this.confettiFloors) return;
+    for (const f of this.confettiFloors) {
+      const c = f.confetti;
+      let live = 0;
+      c.parts.forEach((q, i) => {
+        if (q.age >= LIFE) return;
+        q.age += dt;
+        live++;
+        q.v.y -= 7 * dt;
+        q.v.multiplyScalar(1 - 1.2 * dt);
+        q.p.addScaledVector(q.v, dt);
+        q.r.addScaledVector(q.w, dt);
+        const k = q.age >= LIFE ? 0 : Math.min(1, (LIFE - q.age) / 0.4, q.age / 0.08);
+        c.mesh.setMatrixAt(i, _m4.compose(q.p, _q4.setFromEuler(_e4.set(q.r.x, q.r.y, q.r.z)), _s4.setScalar(k)));
+      });
+      c.mesh.visible = live > 0;
+      if (live || c.dirty) c.mesh.instanceMatrix.needsUpdate = true;
+      c.dirty = live > 0;
+    }
+  }
+
+  // an emoji that pops up over the head every 15-40 s (never while it needs you)
+  mood(bot, dt, s, act, busy, visible) {
+    if (bot.moodIn === undefined) bot.moodIn = 4 + Math.random() * 30;
+    if (bot.moodAge < MOOD_FOR) {
+      // pop in, float up a little, fade out
+      bot.moodAge += dt;
+      const u = bot.moodAge / MOOD_FOR, hide = !visible || (s !== 'working' && s !== 'resting');
+      const o = hide || u >= 1 ? 0 : Math.min(1, u / 0.12, (1 - u) / 0.2);
+      const sc = u < 0.12 ? 0.6 + (0.45 * u) / 0.12 : 1;
+      bot.moodEl.firstChild.style.opacity = o.toFixed(2);
+      bot.moodEl.firstChild.style.transform = `translateY(${(6 - 16 * u).toFixed(1)}px) scale(${sc.toFixed(2)})`;
+      return;
+    }
+    bot.moodIn -= dt;
+    if (bot.moodIn > 0) return;
+    bot.moodIn = 15 + Math.random() * 25;
+    if (busy || !visible || (s !== 'working' && s !== 'resting') || bot.id === this.selected) return;
+    if (!bot.moodEl) {
+      const el = document.createElement('div');
+      el.className = 'mood';
+      el.style.pointerEvents = 'none';
+      el.innerHTML = '<span style="display:block;font-size:calc(17px * var(--z, 1));line-height:1;padding:4px 6px;border-radius:999px;background:rgba(255,255,255,.92);box-shadow:0 2px 8px rgba(0,0,0,.15);opacity:0"></span>';
+      bot.moodEl = el;
+      bot.moodObj = new CSS2DObject(el);
+      bot.root.add(bot.moodObj);
+    }
+    bot.moodObj.position.set(0.55, bot.height + 0.25, 0);
+    bot.moodEl.firstChild.textContent = pickMood(s, act);
+    bot.moodAge = 0;
+  }
+
+  // the bot standing at a spot, if it has got there and is still on its break
+  at(f, i) {
+    const id = f.rest[i]?.taken;
+    const b = id && this.bots.get(id);
+    return b && b.floor === f && !b.path.length && b.rec.state === 'resting' && b.celebrate <= 0 ? b : null;
+  }
+
+  // the hoop: the ball sits on the shooter's head, flies to the rim on the jump, drops through
+  shoot(f, bot, c) {
+    const ballM = f.fx.hoopBall, rim = f.fx.hoop.rim;
+    // the ball is held between the hands until it leaves them
+    bot.root.updateMatrixWorld(true);
+    const a = bot.chibi.hand(1, V(0, 0, 0)), b = bot.chibi.hand(-1, V(0, 0, 0));
+    const head = f.inner.worldToLocal(a.add(b).multiplyScalar(0.5));
+    head.x += Math.sin(bot.rotY) * 0.12;
+    head.z += Math.cos(bot.rotY) * 0.12;
+    if (c < 0.42) {
+      ballM.position.copy(head);
+      bot.ballFrom = head;
+    } else if (c < 0.75) {
+      const u = (c - 0.42) / 0.33;
+      ballM.position.lerpVectors(bot.ballFrom || head, rim, u);
+      ballM.position.y += Math.sin(u * Math.PI) * 1.6;
+    } else {
+      const u = (c - 0.75) / 0.25;
+      ballM.position.set(rim.x, rim.y - (rim.y - 0.24) * Math.min(1, u * 1.6), rim.z + u * 1.8);
+      if (u > 0.62) ballM.position.y = 0.24 + Math.abs(Math.sin((u - 0.62) * 8)) * 0.6 * (1 - u);
+    }
+  }
+
+  floorFx(f, t) {
+    const fx = f.fx;
+    // ping-pong: rally between two players, a solo player bounces the ball
+    const [a, b] = fx.pp.spots.map((i) => this.at(f, i));
+    const front = (p) => V(p.pos.x + Math.sin(p.rotY) * 0.9, 1.08, p.pos.z + Math.cos(p.rotY) * 0.9);
+    if (a && b) {
+      const u = (t * 0.55) % 1, half = u < 0.5 ? u * 2 : (u - 0.5) * 2;
+      const [p, q] = u < 0.5 ? [front(a), front(b)] : [front(b), front(a)];
+      fx.ppBall.position.lerpVectors(p, q, half);
+      fx.ppBall.position.y = 1.08 + Math.abs(Math.sin(half * Math.PI * 2)) * 0.55;
+    } else if (a || b) {
+      const p = front(a || b);
+      fx.ppBall.position.set(p.x, 1.08 + Math.abs(Math.sin(t * 4)) * 0.6, p.z);
+    } else fx.ppBall.position.copy(fx.pp.center);
+    // nobody at the hoop: the ball rests on the floor
+    if (!this.at(f, fx.hoop.spot)) fx.hoopBall.position.set(fx.hoop.rim.x + 0.6, 0.24, fx.hoop.rim.z + 2.2);
+    // screens light up while someone is playing
+    const playing = fx.game.some((i) => this.at(f, i));
+    const tvOn = this.at(f, fx.game[0]) || this.at(f, fx.game[1]);
+    fx.tv.material.emissive.setHSL((t * 0.15) % 1, 0.75, tvOn ? 0.45 + 0.1 * Math.sin(t * 6) : 0.06);
+    fx.arcade.material.emissive.setHSL((t * 0.3 + 0.5) % 1, 0.9, this.at(f, fx.game[2]) ? 0.5 : playing ? 0.12 : 0.08);
   }
 }

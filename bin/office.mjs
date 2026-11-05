@@ -11,6 +11,7 @@ import { createServer } from 'node:http';
 import { readFileSync, readdirSync, statSync, watch, existsSync } from 'node:fs';
 import { join, resolve, extname, sep } from 'node:path';
 import { homedir } from 'node:os';
+import { statusAll, codexOf, GRACE, TURN_MAX } from './status.mjs';
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
 const PORT = Number(process.env.PORT || 4321);
@@ -22,9 +23,10 @@ const COLOR = {
   black: '#1b1b1f', brown: '#936439', red: '#FF263C', orange: '#FF6700', yellow: '#FF9800', green: '#00C972',
   cyan: '#00BCA6', blue: '#1084FE', violet: '#9159FE', magenta: '#FF309B', gray: '#777777',
 };
-const WORKING_FOR = 30 * 60e3; // a question with no reply yet counts as work for this long
-const FRESH = 2 * 60e3; // output this recent still counts as working
-const ASKING_FOR = 24 * 3600e3; // an unanswered question from the bot counts as waiting for this long
+const POLL = Math.max(1, Number(process.env.GROKBOT_POLL_SEC) || 5) * 1e3; // re-read the cache this often
+const DEBUG = process.env.GROKBOT_DEBUG === '1';
+const ALL = process.env.GROKBOT_ALL === '1';
+const SIDEBAR_ONLY = process.env.GROKBOT_SIDEBAR_ONLY === '1';
 
 // ---------- reading the cache ----------
 
@@ -55,60 +57,35 @@ function readCache() {
   };
 }
 
-const snippet = (s) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, 120);
-
-function teamOf(row, sections) {
+function teamOf(row, sections, hidden) {
   for (const s of sections) {
     const ids = s.agentIds || s.items || s.memberIds || [];
-    if (ids.includes?.(row.id)) return s.name || s.title || 'Team';
+    if (ids.includes?.(row.id) || ids.some?.((x) => x?.id === row.id || x?.agentId === row.id)) return s.name || s.title || 'Team';
   }
-  return 'My bots';
+  return hidden ? 'Hidden' : 'My bots';
 }
 
-// Who is doing what, from the roster row and its cached transcript.
-function statusOf(row, entries, now) {
-  const lastAt = row.lastActivityAt || row.updatedAt || now;
-  const lastText = snippet(row.lastEntry?.text);
-  if (row.awaitingUserResponse) return { state: 'waiting', task: lastText, at: lastAt };
-  const talk = entries.filter((e) => e.kind === 'message' || e.kind === 'send-message');
-  const last = talk[talk.length - 1];
-  if (talk.some((e) => e.isStreaming)) return { state: 'working', task: 'Writing a reply', at: lastAt };
-  if (last?.kind === 'message' && last.role === 'user' && now - (last.timestampMs || 0) < WORKING_FOR) {
-    return { state: 'working', task: `On it: ${snippet(last.content)}`, at: last.timestampMs };
-  }
-  if (now - lastAt < FRESH) return { state: 'working', task: lastText, at: lastAt };
-  // Its last word asks something of you and you haven't answered: a choice card, a
-  // permission request, a form, an email draft to approve, or a plain question.
-  // (The app's own awaitingUserResponse flag only covers some of these.)
-  const m = last?.kind === 'send-message' ? last.message || {} : null;
-  if (m && now - (last.timestampMs || 0) < ASKING_FOR) {
-    const ask = {
-      widget: () => m.widget?.prompt || 'Pick an option',
-      'local-tool-permission': () => m.ask?.title || m.ask?.description || 'Asks permission to use a tool',
-      'user-form': () => m.formRequest?.title || 'Fill in a form',
-      'email-draft': () => `Approve email${m.draft?.subject ? `: ${m.draft.subject}` : ''}`,
-      text: () => (/[?？]\s*$/.test(String(m.content || '')) ? m.content : null),
-    }[m.type]?.();
-    if (ask) return { state: 'waiting', task: snippet(ask), at: last.timestampMs };
-  }
-  return { state: 'resting', task: lastText, at: lastAt };
-}
+// Who is doing what: see bin/status.mjs.
 
 // Messages it sent in the last 7 days: the cache has no per-bot token counts.
 const recentReplies = (entries, now) => entries.filter((e) => e.kind === 'send-message' && now - (e.timestampMs || 0) < 7 * 864e5).length;
 
 // ---------- turning the cache into feed messages ----------
 
-let last = { roster: '', status: new Map(), plan: '', usage: '' };
+let last = { roster: '', status: new Map(), plan: '', usage: '', codex: '' };
+let derived = { at: 0, bots: [] }; // the latest states and why, for /api/debug
 
 function snapshot(full) {
   const cache = readCache();
   const now = Date.now();
   if (!cache) return full ? [{ t: 'roster', bots: [] }] : [];
   const out = [];
-  const rows = cache.roster.filter((r) => !r.isRemovedFromSidebar && !r.isHiddenFromSidebar && !r.isGroup);
+  // Every bot you have, including ones hidden from the app's sidebar (they get their own
+  // "Hidden" floor unless they sit in a section). GROKBOT_SIDEBAR_ONLY=1 shows only the
+  // sidebar's bots, as before; bots removed from the sidebar stay out unless GROKBOT_ALL=1.
+  const rows = cache.roster.filter((r) => !r.isGroup && (ALL || !r.isRemovedFromSidebar) && (!SIDEBAR_ONLY || !r.isHiddenFromSidebar));
   const bots = rows.map((r) => ({
-    id: r.id, name: r.name || 'Bot', team: teamOf(r, cache.sections),
+    id: r.id, name: r.name || 'Bot', team: teamOf(r, cache.sections, r.isHiddenFromSidebar || r.isRemovedFromSidebar),
     shape: r.avatarShape || 'blob', color: COLOR[r.avatarColor] || '#777777',
     chat: `grokbot://agent/${encodeURIComponent(r.id)}`, // opens this bot in the desktop app
   }));
@@ -117,19 +94,34 @@ function snapshot(full) {
   last.roster = rosterKey;
 
   const usage = [];
+  const states = statusAll(rows, cache.transcript, now);
+  derived = { at: now, grace: GRACE / 60e3, turnMax: TURN_MAX / 60e3, bots: [] };
+  const dayOf = (at) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Taipei', year: 'numeric', month: '2-digit', day: '2-digit' }).format(at);
+  const day = dayOf(now), leaders = [];
   for (const r of rows) {
     const entries = cache.transcript(r.id);
-    const s = statusOf(r, entries, now);
+    const s = states.get(r.id);
+    const c = codexOf(entries, now, s.state);
+    const count = c.handoffs.filter((at) => dayOf(at) === day).length;
+    if (count) leaders.push({ bot: r.id, name: r.name, count });
     const prev = last.status.get(r.id);
-    const key = `${s.state}|${s.task}`;
+    const key = `${s.state}|${s.task}|${JSON.stringify([c.state, c.at, c.task])}`;
     if (full || key !== prev?.key) {
       // a bot that was working and now isn't has finished something
       const state = prev && prev.state === 'working' && s.state === 'resting' ? 'done' : s.state;
-      out.push({ bot: r.id, state, task: s.task, at: s.at });
+      out.push({ bot: r.id, state, task: s.task, at: s.at, why: s.why, ...(c.state ? { codex: { state: c.state, at: c.at, task: c.task } } : {}) });
+      if (DEBUG && prev?.codex !== c.state) console.log(`${r.name} Codex: ${prev?.codex || '-'} -> ${c.state || '-'} (${c.why})`);
+      if (DEBUG && !full) console.log(`${new Date(now).toLocaleTimeString()}  ${r.name.padEnd(18)} ${(prev?.state || '-').padEnd(8)} -> ${state.padEnd(8)} ${s.why}`);
     }
-    last.status.set(r.id, { key, state: s.state });
+    last.status.set(r.id, { key, state: s.state, codex: c.state });
     usage.push({ bot: r.id, used: recentReplies(entries, now) });
+    derived.bots.push({ id: r.id, name: r.name, state: s.state, why: s.why, task: s.task, lastActivityMinAgo: +((now - (r.lastActivityAt || 0)) / 60e3).toFixed(1), transcriptEntries: entries.length, codex: { state: c.state, why: c.why, handoffsToday: count } });
   }
+  leaders.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  const board = { t: 'codex', today: leaders.reduce((n, x) => n + x.count, 0), day, top: leaders.slice(0, 5) };
+  const boardKey = JSON.stringify(board);
+  if (full || boardKey !== last.codex) out.push(board);
+  last.codex = boardKey;
   const usageKey = JSON.stringify(usage);
   if (full || usageKey !== last.usage) out.push({ t: 'usage', unit: 'replies', bots: usage });
   last.usage = usageKey;
@@ -157,8 +149,9 @@ function changed() {
   }, 250);
 }
 if (existsSync(DIR)) watch(DIR, changed);
-// time alone also changes states (a question going stale, fresh output aging)
-setInterval(changed, 15e3);
+// time alone also changes states (a question going stale, fresh output aging), and
+// fs.watch can miss the app's atomic rewrites, so poll as well
+setInterval(changed, POLL);
 
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.md': 'text/plain; charset=utf-8' };
 
@@ -168,10 +161,15 @@ createServer((req, res) => {
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({ ok: true, source: 'grokbot-local', found: existsSync(DIR) }));
   }
+  if (url.pathname === '/api/debug') {
+    if (!derived.at) snapshot(false);
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-cache' });
+    return res.end(JSON.stringify(derived, null, 1));
+  }
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
     clients.add(res);
-    last = { roster: '', status: new Map(last.status), plan: '', usage: '' };
+    last = { roster: '', status: new Map(last.status), plan: '', usage: '', codex: '' };
     for (const m of snapshot(true)) send(res, m);
     const ping = setInterval(() => res.write(': ping\n\n'), 25e3);
     req.on('close', () => { clearInterval(ping); clients.delete(res); });
@@ -187,4 +185,9 @@ createServer((req, res) => {
 }).listen(PORT, '127.0.0.1', () => {
   console.log(`GrokBot Office: http://127.0.0.1:${PORT}/`);
   console.log(existsSync(DIR) ? `Reading Grok Bot from ${DIR}` : `Grok Bot cache not found at ${DIR} (set GROKBOT_DIR)`);
+  if (DEBUG) {
+    // what every bot is now, and why
+    snapshot(false);
+    console.log(`(state changes are logged as they happen; also see http://127.0.0.1:${PORT}/api/debug or /?debug)`);
+  }
 });
