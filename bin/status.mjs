@@ -31,10 +31,10 @@ const ago = (ms) => (ms < 90e3 ? `${Math.round(ms / 1e3)}s` : `${Math.round(ms /
 
 // "I'm on it" in English and Chinese: a short reply that acknowledges, not the result.
 // (Long replies are taken as the answer, whatever they say.)
-const INTERIM = /\b(on it|i'?ll (get|start|look|check|dig|work|run|go|do|try|find|take|handle|build|write|fix|set)|i'?m (now )?(going to|working|starting|looking|checking|running|on it|digging|setting|building|writing|fixing)|let me (check|look|try|start|get|run|dig|see|find|work|take|pull|go)|working on (it|this|that)|starting (now|on)|one (moment|sec)|give me (a|\d)|be right back|in progress|stand by|will (report|update you|get back))\b|稍等|馬上|正在|開始(處理|做|進行|研究|找|執行|動工)|我來(處理|看|做|找|查|跑)|我先(看|查|跑|處理|找|試)|處理中|進行中|執行中|等我|晚點回報|完成後(回報|告訴|通知)/i;
+const INTERIM = /\b(on it|on it, starting|kicked off|started (the|a) (run|job|task)|i'?ll (get|start|look|check|dig|work|run|go|do|try|find|take|handle|build|write|fix|set)|i'?m (now )?(going to|working|starting|looking|checking|running|on it|digging|setting|building|writing|fixing)|let me (check|look|try|start|get|run|dig|see|find|work|take|pull|go)|working on (it|this|that)|starting (now|on)|one (moment|sec)|give me (a|\d)|be right back|in progress|stand by|will (report|update you|get back))\b|稍等|馬上|正在|已開工|開工了|開始(處理|做|進行|研究|找|執行|動工|修|改|寫|跑|弄|重做|動手)|(修|做|改|跑|弄)完(會|再|就|後)|會(重拍|回報|送回|再回報)|我來(處理|看|做|找|查|跑)|我先(看|查|跑|處理|找|試)|處理中|進行中|執行中|等我|晚點回報|完成後(回報|告訴|通知)/i;
 const interim = (m) => { const c = String(m?.content || ''); return c.length > 0 && c.length < 500 && INTERIM.test(c); };
 
-const inbound = (e) => (e.kind === 'message' && e.role === 'user') || e.kind === 'user-attachment';
+const inbound = (e) => (e.kind === 'message' && (e.role === 'user' || e.fromAgent)) || e.kind === 'user-attachment';
 const output = (e) => e.kind === 'send-message' || (e.kind === 'message' && e.role === 'assistant');
 const agentOf = (x) => (x && typeof x === 'object' ? x.id || x.agentId : x) || null;
 
@@ -115,28 +115,48 @@ export function statusAll(rows, transcriptOf, now) {
   return out;
 }
 
-// Detect both recorded shell calls and explicit assistant hand-offs.
+// Group messages and recorded tool calls into inbound turns.
 export function codexOf(entries, now, botState = null) {
-  entries = Array.isArray(entries) ? entries.filter((e) => e && typeof e === 'object') : [];
-  const matches = [];
-  for (const e of entries) {
-    let payload = '';
-    try { payload = JSON.stringify(e); } catch { continue; }
-    const tool = /tool|shell|command|exec|bash/i.test(`${e.kind || ''} ${e.type || ''}`) || ['command', 'args', 'input'].some((k) => k in e);
-    const text = String(e.message?.content || e.content || e.text || '');
-    const hand = output(e) && /\bcodex\b/i.test(text) && (/\b(hand|delegat|ask|run|send|let|have|using|use|kick|start)\w*/i.test(text) || /(?:交給|請|用|讓|叫).*codex/i.test(text));
-    if ((tool && /\bcodex(\s+(exec|e|run|apply|resume)\b|\s+["'\-]|(?=["\\]|$))/i.test(payload)) || hand) matches.push({ e, tool, at: Number(e.timestampMs || e.at || 0), text });
+  const CODEX = /\bcodex\b|\bcx\.sh\b|codex_quota|codex_stage|codex exec/i;
+  const turns = [];
+  for (const e of Array.isArray(entries) ? entries : []) {
+    if (!e || typeof e !== 'object') continue;
+    if (inbound(e)) turns.push({ inbound: e, entries: [] });
+    else if (turns.length) turns.at(-1).entries.push(e);
   }
-  const handoffs = [];
-  for (const h of matches.sort((a, b) => a.at - b.at)) if (h.at && (!handoffs.length || h.at - handoffs.at(-1) >= 120e3)) handoffs.push(h.at);
-  const h = matches.at(-1);
-  if (!h || !h.at) return { state: null, at: null, task: '', why: 'no hand-off', handoffs };
-  const after = entries.filter((e) => (e.timestampMs || 0) > h.at);
-  const finished = h.tool && (['result', 'output', 'exitCode', 'endedAt'].some((k) => eHas(h.e, k)) || /^(done|completed|finished|success|failed)$/i.test(String(h.e.status || '')));
-  const reply = after.find((e) => output(e) && !interim(e.message || e) && !(/\bcodex\b/i.test(String(e.message?.content || e.content || '')) && /hand|delegat|using/i.test(String(e.message?.content || e.content || ''))));
-  const lastInbound = entries.filter(inbound).at(-1)?.timestampMs || 0;
-  const state = finished || reply || (botState && botState !== 'working') ? 'done' : ((h.at >= lastInbound || botState === 'working') && now - h.at < TURN_MAX ? 'running' : null);
-  const at = reply?.timestampMs || Number(h.e.endedAt) || h.at;
-  return { state: state === 'done' && now - at > 15 * 60e3 ? null : state, at, task: snippet(h.e.command || h.e.input || h.text || 'Codex task'), why: finished ? 'tool finished' : reply ? 'assistant replied' : state === 'done' ? 'bot stopped working' : state === 'running' ? 'hand-off in current turn' : 'hand-off expired', handoffs };
+  const at = (e) => Number(e?.timestampMs || e?.at || 0);
+  const text = (e) => String(e?.message?.content || e?.content || e?.text || '');
+  const tool = (e) => /tool|shell|command|exec|bash/i.test(`${e.kind || ''} ${e.type || ''}`) || ['command', 'args', 'input'].some((k) => k in e);
+  const uses = (e) => {
+    if (inbound(e) || output(e)) return CODEX.test(text(e));
+    if (!tool(e)) return false;
+    try { return CODEX.test(JSON.stringify(e)); } catch { return false; }
+  };
+  for (const t of turns) {
+    t.match = [t.inbound, ...t.entries].find(uses);
+    t.outputs = t.entries.filter(output);
+  }
+  const used = turns.filter((t) => t.match);
+  const handoffs = used.map((t) => at(t.inbound) || at(t.match)).filter(Boolean);
+  const current = turns.at(-1), last = used.at(-1);
+  const habit = used.filter((t) => now - (at(t.inbound) || at(t.match)) < 48 * 3600e3).length >= 3;
+  const lastOut = current?.outputs.at(-1);
+  const task = snippet(text(current?.match) || current?.match?.command || text(current?.inbound) || 'Codex task');
+  if (current && botState === 'working') {
+    const matchIndex = current.entries.indexOf(current.match);
+    const finishedTool = current.entries.some((e, i) => tool(e) && (i >= matchIndex) && (['result', 'output', 'exitCode', 'endedAt'].some((k) => e[k] != null) || /^(done|completed|finished|success|failed)$/i.test(String(e.status || ''))));
+    const laterReply = current.entries.some((e, i) => i > matchIndex && output(e) && !interim(e.message || e));
+    if (current.match && !finishedTool && !laterReply) return { state: 'running', at: at(current.match), task, why: tool(current.match) ? 'codex tool call' : 'current turn mentions Codex', handoffs };
+    if (!current.match && habit && lastOut && interim(lastOut.message || lastOut) && now - at(lastOut) < TURN_MAX) return { state: 'running', at: at(lastOut), task, why: "Codex user, acked 'on it'", handoffs };
+  }
+  if (last) {
+    const matchIndex = last.entries.indexOf(last.match);
+    const result = last.entries.filter((e, i) => i >= matchIndex && tool(e) && (['result', 'output', 'exitCode', 'endedAt'].some((k) => e[k] != null) || /^(done|completed|finished|success|failed)$/i.test(String(e.status || '')))).at(-1);
+    const reply = last.entries.some((e, i) => i > matchIndex && output(e) && !interim(e.message || e));
+    const end = last.outputs.at(-1) || result;
+    const ended = botState !== 'working' || reply || result;
+    const endAt = at(end) || Number(result?.endedAt || 0);
+    if (ended && endAt && now - endAt < 15 * 60e3) return { state: 'done', at: endAt, task: snippet(text(last.match) || last.match.command || 'Codex task'), why: result ? 'tool finished' : reply ? 'assistant replied' : 'bot stopped working', handoffs };
+  }
+  return { state: null, at: null, task: '', why: 'no active Codex turn', handoffs };
 }
-const eHas = (e, k) => Object.prototype.hasOwnProperty.call(e, k) && e[k] != null;

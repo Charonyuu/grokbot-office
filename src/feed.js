@@ -92,9 +92,14 @@ function startDemo(still, sleepy) {
   // ?still: no random events, so a recording can script every change itself
   if (!still) {
     setInterval(tick, 1800);
-    const names = ['Arxiv Owl', 'Hook Writer', 'Lead Finder']; let n = 0;
-    const cycle = () => { const name = names[n++ % names.length]; codexDemo(name); setTimeout(() => codexDemo(name, true), 30000 + Math.random() * 10000); };
-    setTimeout(cycle, 4000); setInterval(cycle, 45000);
+    const names = ['Arxiv Owl', 'Hook Writer', 'Lead Finder', 'Inbox Butler'];
+    names.forEach((name, i) => {
+      const cycle = () => {
+        codexDemo(name);
+        setTimeout(() => { codexDemo(name, true); setTimeout(cycle, 5000 + Math.random() * 4000); }, 30000 + Math.random() * 30000);
+      };
+      setTimeout(cycle, 2000 + i * 2500);
+    });
   }
 }
 

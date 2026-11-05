@@ -62,9 +62,9 @@ Or open http://127.0.0.1:4321/?debug for a panel with the same list, or http://1
 | shaking at its desk, hands on its head, with a red "!" and a red ring | it is stuck: its last task was stopped (for example the app's 50-minute limit for background tasks) |
 | spinning and cheering with its arms up | it just finished something |
 
-### Codex contractor
+### Codex office
 
-Each floor has a Codex contractor and a board counting today's hand-offs in Taipei time. Bots visit the corner when they delegate and return for completed work. Detection looks for Codex shell/tool calls or assistant messages explicitly handing work to Codex; the app cache may not record tool calls, so in that case only explicit messages are detected. The state is an estimate based on the current turn and replies.
+Each floor has a Codex office with eight robots and a usage board on the office wall. Bots supervise their assigned robot while Codex runs; when it finishes, they collect a printout, show ✅, and celebrate with confetti before returning to their desks. Detection uses Codex tool calls or explicit hand-off messages, so the displayed state is an estimate when tool calls are absent from the app cache.
 
 ### Desks and break zones
 
@@ -134,7 +134,7 @@ Everything stays on your machine. The server only listens on 127.0.0.1, reads th
 
 **誰在工作？** app 的本機快取會記錄訊息，但可能不記錄中間的工具執行、瀏覽和子代理，所以 bot 回了「收到／正在處理」後安靜做事的那段時間，舊版會誤判成休息。現在只要符合下面任一條件就算工作中，bot 會留在座位上：有人（你或其他 bot）傳訊給它但它還沒回；它最後回的是「收到／正在處理／稍等」這類短訊息（最多 50 分鐘）；它把工作交給別的 bot，對方還沒回報；它找來幫忙的 bot 還在做；它 8 分鐘內有發言。想核對的話，執行 `GROKBOT_DEBUG=1 node bin/office.mjs`（終端機會列出每個 bot 的狀態和原因），或打開 http://127.0.0.1:4321/?debug 。時間長度可以用 `GROKBOT_GRACE_MIN`、`GROKBOT_TURN_MAX_MIN`、`GROKBOT_POLL_SEC` 調整。
 
-每層樓有 Codex 承包工作區與今日委派次數排行榜（台北時間）。系統從 Codex 工具呼叫或明確表示交給 Codex 的訊息判斷；app 快取可能不記錄工具呼叫，此時只能偵測明確的委派訊息。
+每層樓都有 Codex 辦公室、八個機器人和牆上的使用量排行榜。Codex 執行時，機器人會前往監督；完成後拿取列印結果、顯示 ✅ 並以彩紙慶祝，再返回座位。系統依工具呼叫或明確委派訊息估計狀態；若 app 快取沒有工具呼叫，便只能偵測明確訊息。
 
 辦公室參考 Google 辦公室的配置，除了座位區，每層樓還有：
 

@@ -24,7 +24,7 @@ export function floorPlan(n) {
   const rows = Math.max(2, Math.ceil(Math.sqrt(pods / 1.4)));
   const cols = Math.max(1, Math.ceil(pods / rows));
   const deskLen = cols * POD_X;
-  const W = 2.8 + deskLen + 3.4 + ZONE_W + 0.6;
+  const W = 15.3 + deskLen + 3.4 + ZONE_W + 0.6;
   const D = Math.max(22, rows * POD_Z + 8);
   return { rows, cols, pods, desks, deskLen, W, D, seats: pods * 4, key: `${rows}x${cols}x${pods}` };
 }
@@ -509,21 +509,21 @@ export class Floor {
     this.inner.add(win);
     this.inner.add(box(0.35, WALL_H, D, M.wall, -W / 2, WALL_H / 2, 0));
     // Google-coloured stripes on the side wall
-    PRIMARY.forEach((c, i) => this.inner.add(box(0.06, WALL_H - 0.6, 0.42, C(c, { roughness: 0.6 }), -W / 2 + 0.2, WALL_H / 2, 3.2 + i * 0.6)));
+    PRIMARY.forEach((c, i) => this.inner.add(box(0.06, WALL_H - 0.6, 0.42, C(c, { roughness: 0.6 }), -W / 2 + 0.2, WALL_H / 2, -D / 2 + 6.2 + i * 0.6)));
 
     this.screen = teamScreen(team, number);
-    this.screen.position.set(-W / 2 + 0.3, 3.9, -1.5);
+    this.screen.position.set(-W / 2 + 0.3, 3.9, -D / 2 + 3);
     this.screen.rotation.y = Math.PI / 2;
     this.inner.add(this.screen);
 
-    this.x0 = -W / 2 + 2.8; // desks start here
+    this.x0 = -W / 2 + 15.3; // desks start here
     this.deskRight = this.x0 + plan.deskLen;
     this.aisleX = this.deskRight + 1.7; // the main corridor between desks and zones
     this.zx0 = this.deskRight + 3.4;
     this.zx1 = W / 2 - 0.6;
 
     this.seats = this.desks();
-    this.codexCorner();
+    this.codexOffice();
     this.cafe();
     this.gym();
     this.lounge();
@@ -537,26 +537,46 @@ export class Floor {
     this.facade.traverse((o) => { o.userData.team = team; });
   }
 
-  codexCorner() {
-    const x = -this.W / 2 + 1.5, z = -this.D / 2 + 1.5, g = this.inner;
-    g.add(box(2.4, 0.18, 1.2, M.dark, x, 1.35, z));
-    for (const dx of [-0.95, 0.95]) g.add(box(0.12, 1.3, 0.12, M.frame, x + dx, 0.65, z));
-    g.add(box(1.82, 0.92, 0.12, M.frame, x, 2.35, z - 0.25));
-    g.add(box(0.65, 0.32, 0.55, M.white, x + 0.8, 1.6, z + 0.05));
-    g.add(box(0.55, 1.25, 0.75, M.frame, x - 0.95, 0.63, z + 0.95));
-    const led = box(0.09, 0.09, 0.03, C(0x37e69a, { emissive: 0x19a65b }), x - 0.95, 1.05, z + 1.34);
-    led.userData.keep = true; g.add(led); this.codexLed = led;
+  codexOffice() {
+    const g = this.inner, left = -this.W / 2 + 0.4, right = left + 11.5;
+    const front = this.D / 2 - 0.4, back = front - 8.5, doorZ = back + 4.25;
+    g.add(box(11.5, 0.025, 8.5, C(0x202932), (left + right) / 2, 0.015, (front + back) / 2));
+    // The building wall closes the left side. Leave a wide opening in the aisle wall.
+    const wall = (x, z, w, d) => {
+      g.add(box(w, 3.2, d, M.glass, x, 1.6, z));
+      g.add(box(w, 0.09, d, M.frame, x, 3.2, z));
+      this.solid(x, z, w, d);
+    };
+    wall((left + right) / 2, back, 11.5, 0.08);
+    wall((left + right) / 2, front, 11.5, 0.08);
+    for (const [z, d] of [[(back + doorZ - 1.5) / 2, doorZ - 1.5 - back], [(front + doorZ + 1.5) / 2, front - doorZ - 1.5]]) wall(right, z, 0.08, d);
+    for (const [x, z] of [[left, back], [right, back], [left, front], [right, front], [right, doorZ - 1.5], [right, doorZ + 1.5]]) g.add(box(0.09, 3.2, 0.09, M.frame, x, 1.6, z));
+    const signTex = canvasTex(256, 80, (c) => { c.fillStyle = '#101c20'; c.fillRect(0, 0, 256, 80); c.fillStyle = '#37d9d0'; c.font = 'bold 48px sans-serif'; c.textAlign = 'center'; c.fillText('CODEX', 128, 56); });
+    this.textures.push(signTex);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 0.7), new THREE.MeshBasicMaterial({ map: signTex, side: THREE.DoubleSide }));
+    sign.position.set(right, 2.8, doorZ); sign.rotation.y = Math.PI / 2; g.add(sign);
     const tex = canvasTex(256, 256, (c) => { c.fillStyle = '#10201b'; c.fillRect(0, 0, 256, 256); c.font = '14px monospace'; for (let i = 0; i < 16; i++) { c.fillStyle = i % 3 ? '#74e6a1' : '#eefcf4'; c.fillText(['const task = await run();', '  return result.ok;', '// Codex is working', '  applyPatch(files);'][i % 4], 8, 16 + i * 16); } });
     tex.wrapT = THREE.RepeatWrapping; this.textures.push(tex); this.codexTexture = tex;
-    const screen = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.8), new THREE.MeshBasicMaterial({ map: tex }));
-    screen.position.set(x, 2.35, z - 0.18); screen.userData.keep = true; g.add(screen);
+    this.codexBusyMaterial = new THREE.MeshBasicMaterial({ map: tex });
+    this.codexIdleMaterial = new THREE.MeshBasicMaterial({ color: 0x21363a });
+    const screenGeo = new THREE.PlaneGeometry(1.3, 0.7);
+    this.codexDesks = [];
+    for (let row = 0; row < 2; row++) for (let col = 0; col < 4; col++) {
+      const x = left + 1.45 + col * 2.65, z = back + 1.2 + row * 4;
+      g.add(box(2, 0.14, 0.9, M.dark, x, 1.15, z));
+      for (const dx of [-0.85, 0.85]) g.add(box(0.1, 1.1, 0.1, M.frame, x + dx, 0.55, z));
+      g.add(box(1.4, 0.8, 0.1, M.frame, x, 1.75, z - 0.25));
+      const screen = new THREE.Mesh(screenGeo, this.codexIdleMaterial); screen.position.set(x, 1.75, z - 0.19); screen.userData.keep = true; g.add(screen);
+      g.add(box(0.5, 0.25, 0.45, M.frame, x + 0.7, 1.34, z + 0.18));
+      this.solid(x, z, 2, 0.9);
+      this.codexDesks.push({ robotPos: V(x, 0.72, z + 1), face: Math.PI, superviseSpot: { pos: V(x + 0.95, 0, z + 1.5), face: Math.PI }, printerPos: V(x + 0.7, 1.4, z + 0.45), screen });
+    }
+    this.codexDoor = { pos: V(right, 0, doorZ) };
+    this.codexQueue = [-1.5, 0, 1.5].map((dz) => ({ pos: V(right + 1.5, 0, doorZ + dz), face: -Math.PI / 2 }));
     this.codexBoardCanvas = document.createElement('canvas'); this.codexBoardCanvas.width = 512; this.codexBoardCanvas.height = 320;
     const boardTex = new THREE.CanvasTexture(this.codexBoardCanvas); this.textures.push(boardTex); this.codexBoardTexture = boardTex;
     const board = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 2.1), new THREE.MeshBasicMaterial({ map: boardTex }));
-    board.position.set(-this.W / 2 + 0.21, 4.15, z + 1.1); board.rotation.y = Math.PI / 2; board.userData.keep = true; g.add(board);
-    this.codexSpot = { pos: V(x + 1.7, 0, z + 2.1), approach: null, face: -Math.PI / 2 };
-    this.codexSeat = { pos: V(x, 0.85, z + 0.8), face: Math.PI, reach: V(0, 1.35, 1), type: 'chair' };
-    this.solid(x, z, 2.4, 1.2); this.solid(x - 0.95, z + 0.95, 0.55, 0.75);
+    board.position.set(-this.W / 2 + 0.21, 4.15, doorZ); board.rotation.y = Math.PI / 2; board.userData.keep = true; g.add(board);
     this.setCodexBoard(null);
   }
 
@@ -1096,7 +1116,7 @@ export class Floor {
     this.spawnOut = V(this.aisleX, 0, lz - 2.6);
     // a Google-coloured line down the corridor floor
     PRIMARY.forEach((c, i) => g.add(box(0.12, 0.02, D - 4.6, C(c, { roughness: 0.6 }), this.aisleX - 0.45 + i * 0.3, 0.012, -1.0)));
-    const spots = [[-W / 2 + 1.2, D / 2 - 1.2, 1.0], [this.zx0 + 12.9, -D / 2 + 1.0, 1.0], [this.zx0 + 12.9, 0, 0.8], [this.zx0 + 0.7, D / 2 - 1.0, 0.9], [this.zx0 + 14.5, D / 2 - 1.0, 1.05]];
+    const spots = [[this.zx0 + 12.9, -D / 2 + 1.0, 1.0], [this.zx0 + 12.9, 0, 0.8], [this.zx0 + 0.7, D / 2 - 1.0, 0.9], [this.zx0 + 14.5, D / 2 - 1.0, 1.05]];
     for (const [x, z, sc] of spots) {
       g.add(plant(x, z, sc));
       this.round(x, z, 0.42 * sc);

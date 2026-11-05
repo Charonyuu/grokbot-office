@@ -10,6 +10,9 @@ import { Chibi, HIPS, NECK, HEAD, vec, mirror } from './chibi.js';
 
 const SCALE = 1.3;
 const SPEED = 3.6;
+const codexBandGeo = new THREE.TorusGeometry(0.68, 0.045, 6, 24, Math.PI);
+const codexCupGeo = new THREE.CylinderGeometry(0.19, 0.19, 0.13, 12);
+const codexHeadMat = new THREE.MeshStandardMaterial({ color: 0x37d9d0 });
 const cardGeo = new THREE.PlaneGeometry(0.55, 0.4);
 const cardCanvas = document.createElement('canvas');
 cardCanvas.width = 128; cardCanvas.height = 96;
@@ -545,6 +548,7 @@ export class BotLayer {
     for (const [id, bot] of this.bots) {
       const rec = state.bots.get(id);
       if (!rec || rec.shape !== bot.shape || rec.color !== bot.color) {
+        if (bot.codexFloor) bot.codexFloor.codexOwners[bot.codexIndex] = null;
         bot.dispose();
         this.bots.delete(id);
       }
@@ -558,13 +562,19 @@ export class BotLayer {
       const floor = this.building.floor(team);
       if (!floor) continue;
       floor.setCodexBoard({ ...state.codex, top: (state.codex?.top || []).map((x) => ({ ...x, color: state.bots.get(x.bot)?.color })) });
-      if (!floor.codexBot) {
-        const c = floor.codexBot = new Bot({ id: 'codex-contractor', name: 'Codex', shape: 'cube', color: '#171d24' }, this.gloss);
-        floor.inner.add(c.root); c.root.position.copy(floor.codexSeat.pos); c.root.rotation.y = floor.codexSeat.face;
-        c.label.visible = true; c.el.classList.add('named'); c.el.firstChild.textContent = '⌨';
-        const band = new THREE.Mesh(new THREE.TorusGeometry(0.68, 0.045, 6, 24, Math.PI), new THREE.MeshStandardMaterial({ color: 0x37d9d0 }));
-        band.position.y = 0.75; c.chibi.head.add(band);
-        for (const side of [-1, 1]) { const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.13, 12), band.material); cup.rotation.z = Math.PI / 2; cup.position.set(side * 0.66, 0.75, 0); c.chibi.head.add(cup); }
+      if (!floor.codexRobots) {
+        floor.codexRobots = floor.codexDesks.map((desk, i) => {
+          const c = new Bot({ id: `codex-${i}`, name: 'Codex', shape: 'cube', color: '#171d24' }, this.gloss);
+          floor.inner.add(c.root); c.root.position.copy(desk.robotPos); c.root.rotation.y = desk.face;
+          c.label.visible = false;
+          const seat = { pos: desk.robotPos, type: 'chair', reach: V(0, 1.35, 1) };
+          c.chibi.apply(posture(c, { t: 0, ph: 0, dt: 0, s: 'resting', atSeat: true, seat, moving: false, party: false, climb: 0, walk: 0 }), 1);
+          const band = new THREE.Mesh(codexBandGeo, codexHeadMat); band.position.y = 0.75; c.chibi.head.add(band);
+          for (const side of [-1, 1]) { const cup = new THREE.Mesh(codexCupGeo, codexHeadMat); cup.rotation.z = Math.PI / 2; cup.position.set(side * 0.66, 0.75, 0); c.chibi.head.add(cup); }
+          const el = document.createElement('div'); el.className = 'mood'; el.innerHTML = '<span style="display:block;font-size:17px;line-height:1;padding:4px 6px;border-radius:999px;background:rgba(255,255,255,.92)">⏳</span>';
+          c.codexBubble = new CSS2DObject(el); c.codexBubble.position.set(0.55, c.height + 0.25, 0); c.root.add(c.codexBubble); c.codexBubble.visible = false;
+          return c;
+        });
       }
       const plates = [];
       recs.forEach((rec, i) => {
@@ -597,14 +607,9 @@ export class BotLayer {
           bot.seenDone = rec.doneAt;
           if (!instant && bot.placed === true) { bot.celebrate = 1.1; bot.doneShow = 2.2; this.burst(bot); }
         }
-        const cs = rec.codex?.state || null;
-        if (cs !== bot.codexSeen) {
-          if (cs && !instant && bot.placed === true && rec.state !== 'waiting' && rec.state !== 'error') {
-            bot.errand = cs === 'done' ? 'pickup' : 'deliver'; bot.errandWait = 0; bot.key = '';
-          }
-          bot.codexSeen = cs;
+        if (bot.codexFloor && (bot.codexFloor !== floor || !rec.codex || rec.state === 'waiting' || rec.state === 'error')) {
+          bot.codexFloor.codexOwners[bot.codexIndex] = null; bot.codexFloor = null; bot.codexIndex = null; bot.errand = null; bot.key = '';
         }
-        if (rec.state === 'waiting' || rec.state === 'error') bot.errand = null;
         this.retarget(bot, instant);
       });
       floor.setPlates(plates);
@@ -630,11 +635,10 @@ export class BotLayer {
   retarget(bot, instant) {
     const s = bot.rec.state, seat = bot.seat, f = bot.floor;
     let to, face, key, approach;
-    if (bot.errand === 'deliver' || bot.errand === 'pickup') {
+    if (bot.errand === 'supervise' || bot.errand === 'pickup' || bot.errand === 'queue') {
       if (bot.spot != null) { f.releaseRest(bot.id); bot.spot = null; }
-      const others = [...this.bots.values()].filter((b) => b !== bot && b.floor === f && (b.errand === 'deliver' || b.errand === 'pickup'));
-      const slot = others.filter((b) => b.id < bot.id).length % 3;
-      to = f.codexSpot.pos.clone().add(V(0, 0, slot * 1.1)); face = f.codexSpot.face; key = 'codex'; approach = null;
+      const sp = bot.errand === 'queue' ? f.codexQueue[bot.queueIndex % 3] : f.codexDesks[bot.codexIndex].superviseSpot;
+      to = sp.pos; face = sp.face; key = bot.errand === 'queue' ? `queue${bot.queueIndex % 3}` : `codex${bot.codexIndex}`; approach = null;
     } else if (s === 'resting' && !bot.errand) {
       if (bot.spot == null || f.rest[bot.spot]?.taken !== bot.id) bot.spot = f.claimRest(bot.id, bot.lastZone);
       const sp = f.rest[bot.spot];
@@ -705,33 +709,46 @@ export class BotLayer {
 
   update(dt, t) {
     const floors = new Set();
+    // Claim a stable preferred desk, then probe for the next free robot.
+    for (const bot of this.bots.values()) {
+      const f = bot.floor, cs = bot.rec.codex?.state;
+      if (!f || !f.codexRobots) continue;
+      f.codexOwners ||= Array(8).fill(null);
+      if (bot.codexFloor && (bot.codexFloor !== f || !cs || bot.rec.state === 'waiting' || bot.rec.state === 'error')) {
+        bot.codexFloor.codexOwners[bot.codexIndex] = null; bot.codexFloor = null; bot.codexIndex = null; bot.errand = null; bot.key = '';
+        this.retarget(bot, false);
+      }
+      if (cs === 'running') bot.codexCompleted = null;
+      if ((!cs || bot.rec.state === 'waiting' || bot.rec.state === 'error') && bot.errand === 'queue') { bot.errand = null; bot.key = ''; this.retarget(bot, false); }
+      if ((cs !== 'running' && cs !== 'done') || bot.rec.state === 'waiting' || bot.rec.state === 'error' || bot.codexCompleted === `${cs}:${bot.rec.codex?.at}`) continue;
+      if (bot.codexIndex == null && bot.errand !== 'return-done') {
+        let hash = 0; for (const ch of String(bot.id)) hash = (Math.imul(hash, 31) + ch.charCodeAt(0)) >>> 0;
+        let index = -1; for (let n = 0; n < 8; n++) { const i = (hash + n) % 8; if (!f.codexOwners[i]) { index = i; break; } }
+        if (index >= 0) { f.codexOwners[index] = bot; bot.codexFloor = f; bot.codexIndex = index; bot.errand = cs === 'done' ? 'pickup' : 'supervise'; bot.errandWait = 0; bot.key = ''; this.retarget(bot, false); }
+        else if (bot.errand !== 'queue') { bot.queueIndex = [...this.bots.values()].filter((b) => b.floor === f && b.errand === 'queue').length; bot.errand = 'queue'; bot.key = ''; this.retarget(bot, false); }
+      } else if (bot.codexIndex != null && cs === 'done' && bot.errand === 'supervise') { bot.errand = 'pickup'; bot.errandWait = 0; }
+    }
     for (const bot of this.bots.values()) {
       if (!bot.floor) continue;
       floors.add(bot.floor);
       const f = bot.floor;
       const s = bot.rec.state;
-      if (bot.errand && !bot.path.length) {
-        if (bot.key === 'codex') {
-          bot.errandWait += dt;
-          if (bot.errandWait >= 1.5) { bot.errand = bot.errand === 'pickup' ? 'return-done' : 'return'; bot.key = ''; this.retarget(bot, false); }
-        } else if (bot.key === 'seat') {
-          if (bot.errand === 'return-done') { bot.doneShow = 1.5; this.burst(bot); }
-          bot.errand = null; bot.key = ''; this.retarget(bot, false);
+      if (bot.errand === 'pickup' && !bot.path.length && bot.key.startsWith('codex')) {
+        bot.errandWait += dt;
+        if (bot.errandWait >= 1.5) {
+          f.codexOwners[bot.codexIndex] = null; bot.codexFloor = null; bot.codexIndex = null;
+          bot.codexCompleted = `done:${bot.rec.codex?.at}`; bot.errand = 'return-done'; bot.doneShow = 1.5; this.burst(bot); bot.key = ''; this.retarget(bot, false);
         }
-      }
-      if (bot.errand && !bot.errandCard) { bot.errandCard = new THREE.Mesh(cardGeo, cardMat); f.inner.add(bot.errandCard); }
+      } else if (bot.errand === 'return-done' && !bot.path.length && bot.key === 'seat') { bot.errand = null; }
+      if (bot.errand === 'pickup' && !bot.errandCard) { bot.errandCard = new THREE.Mesh(cardGeo, cardMat); f.inner.add(bot.errandCard); }
       if (bot.errandCard) {
-        bot.errandCard.visible = !!bot.errand && (bot.key === 'codex' && !bot.path.length || bot.errand === 'return-done');
-        if (bot.errandCard.visible && bot.errand === 'return-done') { bot.errandCard.position.copy(bot.pos).add(V(0, 1.25, 0.5)); bot.errandCard.rotation.set(-0.3, bot.rotY, 0); }
+        bot.errandCard.visible = bot.errand === 'return-done' || (bot.errand === 'pickup' && !bot.path.length && bot.key.startsWith('codex'));
+        if (bot.errandCard.visible && bot.errand === 'return-done') { bot.errandCard.position.copy(bot.pos).add(V(Math.sin(bot.rotY) * 0.5, 1.25, Math.cos(bot.rotY) * 0.5)); bot.errandCard.rotation.set(-0.3, bot.rotY, 0); }
         else if (bot.errandCard.visible) {
-          const desk = f.codexSeat.pos.clone().add(V(0, 1.05, -0.3));
-          const visitor = bot.pos.clone().add(V(0, 1.3, 0));
-          if (bot.errand === 'pickup') {
-            const printer = f.codexSeat.pos.clone().add(V(0.8, 0.75, -0.75));
-            const printed = printer.clone().add(V(0, 0, 0.4));
-            if (bot.errandWait < 0.6) bot.errandCard.position.lerpVectors(printer, printed, bot.errandWait / 0.6);
-            else bot.errandCard.position.lerpVectors(printed, visitor, Math.min(1, (bot.errandWait - 0.6) / 0.8));
-          } else bot.errandCard.position.lerpVectors(visitor, desk, Math.min(1, bot.errandWait / 1.5));
+          const printer = f.codexDesks[bot.codexIndex].printerPos;
+          const printed = printer.clone().add(V(0, 0, 0.4)), visitor = bot.pos.clone().add(V(0, 1.3, 0));
+          if (bot.errandWait < 0.6) bot.errandCard.position.lerpVectors(printer, printed, bot.errandWait / 0.6);
+          else bot.errandCard.position.lerpVectors(printed, visitor, Math.min(1, (bot.errandWait - 0.6) / 0.8));
           bot.errandCard.rotation.set(-0.3, 0, 0);
         }
       }
@@ -804,6 +821,7 @@ export class BotLayer {
       const atSeat = !moving && bot.key === 'seat' && !sp;
       const ctx = { t, ph, dt, s, act, sp, moving, party, atSeat, seat: bot.seat, climb: bot.climb, walk: bot.walk, side: bot.spot % 2, celebrate: bot.celebrate };
       const P = posture(bot, ctx);
+      if (bot.errand === 'supervise' && !moving && Math.sin(t * 0.7 + bot.phase) > 0.75) P.aR = { a: [-1.1, -0.1, 0.2] };
       bot.chibi.apply(P, P.snap ? 1 : 1 - Math.exp(-dt * 16));
 
       bot.root.position.copy(bot.pos).add(bot.side);
@@ -860,23 +878,30 @@ export class BotLayer {
       const near = this.spread || (this.focus ? f.team === this.focus : f.number === this.building.count);
       const say = this.focus && !this.spread ? true : look === 'waiting' || look === 'error';
       bot.label.visible = shown(f) && (bot.id === this.selected || (near && (named || say)));
-      if (bot.codexHint && bot.moodEl) { bot.moodEl.firstChild.style.opacity = '0'; bot.codexHint = false; }
       this.mood(bot, dt, s, act, moving || party, shown(f) && near);
-      if (bot.rec.codex?.state === 'running' && !bot.errand && s !== 'waiting' && s !== 'error') {
-        if (!bot.moodEl) { const el = document.createElement('div'); el.className = 'mood'; el.innerHTML = '<span style="display:block;font-size:calc(17px * var(--z, 1));line-height:1;padding:4px 6px;border-radius:999px;background:rgba(255,255,255,.92)"></span>'; bot.moodEl = el; bot.moodObj = new CSS2DObject(el); bot.root.add(bot.moodObj); }
-        bot.codexHint = true; bot.moodObj.position.set(0.55, bot.height + 0.25, 0); bot.moodObj.visible = shown(f) && near; bot.moodEl.firstChild.textContent = '⏳'; bot.moodEl.firstChild.style.opacity = '1'; bot.moodEl.firstChild.style.transform = '';
-      }
     }
 
     for (const f of floors) {
-      const c = f.codexBot; if (!c) continue;
-      const busy = [...this.bots.values()].some((b) => b.floor === f && b.rec.codex?.state === 'running');
-      const ct = busy ? t * 1.8 : t * 0.3;
-      const P = posture(c, { t: ct, ph: ct, dt, s: busy ? 'working' : 'resting', atSeat: true, seat: f.codexSeat, moving: false, party: false, climb: 0, walk: 0 });
-      c.chibi.apply(P, 1 - Math.exp(-dt * 16));
-      if (busy) f.codexTexture.offset.y -= dt * 0.08;
-      f.codexLed.visible = Math.sin(t * 5) > -0.3;
+      if (!f.codexRobots) continue;
+      let anyBusy = false;
+      f.codexRobots.forEach((c, i) => {
+        const owner = f.codexOwners?.[i], busy = !!(owner && owner.errand === 'supervise' && !owner.path.length && owner.key === `codex${i}` && owner.rec.codex?.state === 'running');
+        f.codexDesks[i].screen.material = busy ? f.codexBusyMaterial : f.codexIdleMaterial;
+        c.codexBubble.visible = busy && shown(f);
+        if (!shown(f)) return;
+        if (busy) {
+          anyBusy = true;
+          const ct = t * 1.8, seat = { pos: f.codexDesks[i].robotPos, type: 'chair', reach: V(0, 1.35, 1) };
+          c.chibi.apply(posture(c, { t: ct, ph: ct, dt, s: 'working', atSeat: true, seat, moving: false, party: false, climb: 0, walk: 0 }), 1 - Math.exp(-dt * 16));
+        } else {
+          if (c.wasBusy) { const seat = { pos: f.codexDesks[i].robotPos, type: 'chair', reach: V(0, 1.35, 1) }; c.chibi.apply(posture(c, { t, ph: t, dt, s: 'resting', atSeat: true, seat, moving: false, party: false, climb: 0, walk: 0 }), 1); }
+          c.pivot.rotation.z = Math.sin(t * 0.6 + i) * 0.025;
+        }
+        c.wasBusy = busy;
+      });
+      if (anyBusy) f.codexTexture.offset.y -= dt * 0.08;
     }
+
     alertMat.waiting.opacity = 0.55 + 0.35 * Math.sin(t * 5);
     alertMat.error.opacity = 0.55 + 0.4 * Math.sin(t * 9);
     for (const f of floors) if (shown(f)) this.floorFx(f, t);

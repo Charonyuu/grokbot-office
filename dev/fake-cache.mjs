@@ -32,6 +32,8 @@ const bots = [
   ['codex-run', 'Codex Running', 'blob', 'blue', [user(5, 'Fix tests'), { kind: 'tool', command: 'codex exec --full-auto \"fix the flaky test\"', timestampMs: m(4) }], 'working', 'running'],
   ['codex-done', 'Codex Done', 'egg', 'green', [user(8, 'Fix tests'), { kind: 'shell', command: 'codex exec fix', result: 'ok', exitCode: 0, timestampMs: m(4) }, say(3, 'The tests are fixed.')], 'working', 'done'],
   ['codex-text', 'Codex Text', 'blob', 'violet', [user(6, 'Fix tests'), say(5, "I'll hand this to Codex")], 'working', 'running'],
+  ['appdev', 'APP Dev', 'blob', 'blue', [user(600, 'Use Codex for r6', 'manager'), say(590, 'r6 做好了'), user(300, 'Use Codex for r7', 'manager'), say(290, 'r7 做好了'), user(30, 'Use Codex for r8', 'manager'), say(25, 'r8 做好了，已送 APP Manager 優先審查。'), user(2.2, 'r8 審查沒通過，先檢查 Codex 額度、用 terra low。', 'manager'), say(2.1, 'r8 沒過，開始修 r9。'), say(2, '已開工。額度還有 76%，修完會重拍受影響場景並送回審查。')], 'working', 'running'],
+  ['codex-old', 'Old Codex Mention', 'egg', 'gray', [user(1500, 'Codex was mentioned yesterday'), say(1499, 'Thanks, noted.')], 'resting', null],
   ['routine', 'Routine Run', 'square', 'yellow', [say(3, 'Weekly digest sent to your inbox.')], 'working'],
 ];
 put(`${A}.roster.last-roster`, { rows: bots.map(([id, name, shape, color, ents]) => ({ id, name, avatarShape: shape, avatarColor: color, lastActivityAt: ents.at(-1).timestampMs, updatedAt: ents.at(-1).timestampMs, lastEntry: { kind: 'text', text: ents.at(-1).content || ents.at(-1).message?.content || ents.at(-1).text || '' }, awaitingUserResponse: false, isGroup: false })) });
@@ -48,7 +50,7 @@ if (process.argv.includes('--check')) {
   for (const [id, name, , , ents, want, codexWant] of bots) {
     const s = states.get(id);
     if (s.state !== want) bad++;
-    if (codexWant && codexOf(ents, now, s.state).state !== codexWant) { bad++; console.log('BAD Codex', name, codexOf(ents, now, s.state)); }
+    if (codexWant !== undefined && codexOf(ents, now, s.state).state !== codexWant) { bad++; console.log('BAD Codex', name, codexOf(ents, now, s.state)); }
     console.log(`${s.state === want ? 'ok ' : 'BAD'} ${name.padEnd(14)} ${s.state.padEnd(8)} ${s.why}`);
   }
   if (bad) { console.log(`${bad} wrong`); process.exit(1); }
